@@ -90,6 +90,10 @@ class ThinHazardDetector:
 
     def _init_onnx_session(self, model_path: Optional[str] = None) -> None:
         """Loads ThreatNet1D ONNX model into an InferenceSession."""
+        if not HAS_ORT or ort is None:
+            logger.info("ONNX runtime not available. Falling back to NumPy inference.")
+            return
+
         search_paths = [Path(model_path)] if model_path else self.DEFAULT_ONNX_PATHS
         resolved_path = None
         for p in search_paths:
@@ -305,7 +309,7 @@ class ThinHazardDetector:
                     "bbox": (min_x, max_x, min_y, max_y, min_z, max_z),
                     "point_count": len(pts_arr),
                     "cost": self.forced_cost,
-                    "radius": float(max(max_x - min_x, max_y - min_y) * 0.5 + 0.1),
+                    "radius": max(max_x - min_x, max_y - min_y) * 0.5 + 0.1,
                     "threat_probability": float(max(probs_arr)),
                 })
                 if len(hazards) >= 20:
