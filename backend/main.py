@@ -233,11 +233,9 @@ class PerceptionPipeline:
                         rigid_points=ml_subsets["rigid"],
                     )
 
-                # Collect all hazards (dynamic cones, spike strips, negative obstacles)
-                all_hazards = []
-                for tid, cones in hazard_cones.items():
-                    for c in cones:
-                        all_hazards.append({"x": c.center_x, "y": c.center_y, "radius": c.semi_minor, "cost": 255})
+                # Collect all hazards (limit to closest 5 dynamic threat cones for <= 35ms SLA)
+                rollout_hazards = self.rollout.predict_hazards(active_tracks, max_hazards=5)
+                all_hazards = list(rollout_hazards)
                 for th in thin_hazards:
                     all_hazards.append({"x": th["centroid"][0], "y": th["centroid"][1], "radius": th["radius"], "cost": 255})
                 for d in dropoffs:
@@ -328,7 +326,8 @@ class PerceptionPipeline:
                     tracks=active_tracks,
                     hazard_cones=hazard_cones,
                 )
-                await self.server.broadcast(payload)
+                # Non-blocking concurrent broadcast (never stalls perception loop)
+                self.server.broadcast_nowait(payload)
 
                 # Cloud health telemetry logging to stdout every 100 frames
                 if self.frame_count % 100 == 0:

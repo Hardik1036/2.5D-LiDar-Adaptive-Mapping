@@ -2,4 +2,6 @@ numpy>=1.24.0
 scipy>=1.10.0
 filterpy>=1.4.5
 websockets>=12.0
+scikit-learn>=1.2.0
+orjson>=3.9.0
 open3d>=0.18.0; python_version < "3.13"

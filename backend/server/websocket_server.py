@@ -112,6 +112,18 @@ class TelemetryWebSocketServer:
             if disconnected:
                 self.connected_clients.difference_update(disconnected)
 
+    def broadcast_nowait(self, message: str):
+        """
+        Non-blocking dispatch: schedules the broadcast task concurrently on the running loop
+        so the perception compute loop never waits on socket I/O.
+        """
+        if self.connected_clients and self._is_running:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self.broadcast(message))
+            except RuntimeError:
+                pass
+
     async def stop(self):
         """Gracefully shuts down the server."""
         self._is_running = False
