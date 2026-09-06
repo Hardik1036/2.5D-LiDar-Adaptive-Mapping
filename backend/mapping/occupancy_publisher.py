@@ -126,13 +126,13 @@ class OccupancyGridBuilder:
             },
             "info": {
                 "map_load_time": {"sec": sec, "nanosec": nanosec},
-                "resolution": float(self.res),
-                "width": int(self.width),
-                "height": int(self.height),
+                "resolution": self.res,
+                "width": self.width,
+                "height": self.height,
                 "origin": {
                     "position": {
-                        "x": float(self.origin_x),
-                        "y": float(self.origin_y),
+                        "x": self.origin_x,
+                        "y": self.origin_y,
                         "z": 0.0,
                     },
                     "orientation": {

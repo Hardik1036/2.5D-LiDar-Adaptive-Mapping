@@ -1,5 +1,13 @@
 {
+  "include": [
+    "backend",
+    "tests"
+  ],
   "extraPaths": [
-    "."
-  ]
+    ".",
+    "E:\\anaconda\\Lib\\site-packages",
+    "E:\\anaconda\\Lib"
+  ],
+  "pythonPath": "E:\\anaconda\\python.exe",
+  "pythonPlatform": "Windows"
 }
