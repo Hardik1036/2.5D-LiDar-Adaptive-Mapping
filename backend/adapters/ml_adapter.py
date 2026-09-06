@@ -32,15 +32,11 @@ def _get_model_paths() -> Tuple[List[Path], List[Path]]:
     root = Path(__file__).resolve().parent.parent
     model_paths = [
         root / "models" / "ThreatNet1D.onnx",
-        root / "model" / "ThreatNet1D.onnx",
         Path("backend/models/ThreatNet1D.onnx"),
-        Path("backend/model/ThreatNet1D.onnx"),
     ]
     calib_paths = [
         root / "models" / "threshold_calibration.json",
-        root / "model" / "threshold_calibration.json",
         Path("backend/models/threshold_calibration.json"),
-        Path("backend/model/threshold_calibration.json"),
     ]
     return model_paths, calib_paths
 

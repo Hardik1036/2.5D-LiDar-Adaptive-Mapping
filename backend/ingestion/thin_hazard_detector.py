@@ -34,16 +34,12 @@ class ThinHazardDetector:
 
     DEFAULT_ONNX_PATHS = [
         Path(__file__).resolve().parent.parent / "models" / "ThreatNet1D.onnx",
-        Path(__file__).resolve().parent.parent / "model" / "ThreatNet1D.onnx",
         Path("backend/models/ThreatNet1D.onnx"),
-        Path("backend/model/ThreatNet1D.onnx"),
     ]
 
     DEFAULT_CALIB_PATHS = [
         Path(__file__).resolve().parent.parent / "models" / "threshold_calibration.json",
-        Path(__file__).resolve().parent.parent / "model" / "threshold_calibration.json",
         Path("backend/models/threshold_calibration.json"),
-        Path("backend/model/threshold_calibration.json"),
     ]
 
     def __init__(
