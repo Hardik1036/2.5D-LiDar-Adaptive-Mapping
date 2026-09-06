@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lidar_25d_mapping"
+version = "0.1.0"
+description = "DRDO PS-53: Adaptive Variable Resolution 2.5D LiDAR Mapping for Dynamic Perception"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "SIH 2026 Team" }
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "scipy>=1.10.0",
+    "filterpy>=1.4.5",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+]
+open3d = [
+    "open3d>=0.18.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["backend*"]
