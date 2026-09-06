@@ -171,9 +171,9 @@ class PerceptionPipeline:
                 ground_pts, obstacle_pts, ground_mask = self.ground_seg.segment(clean_points)
                 t_seg = (time.perf_counter() - t_seg_start) * 1000.0
 
-                # 4. Thin Hazard & Spike Strip Detection [F1.6]
+                # 4. Thin Hazard & Spike Strip Detection [F1.6] (ThreatNet1D ONNX)
                 t_thin_start = time.perf_counter()
-                thin_hazards = self.thin_hazard_detector.detect_low_profile_hazards(ground_pts)
+                thin_hazards = self.thin_hazard_detector.detect_threats(ground_pts)
                 t_thin = (time.perf_counter() - t_thin_start) * 1000.0
 
                 # 5. ML Perception Adapter (Semantic label partitioning & Pillar detections)
@@ -188,6 +188,9 @@ class PerceptionPipeline:
                 # 6. Adaptive 2.5D Quadtree construction
                 t_quad_start = time.perf_counter()
                 leaves = self.quadtree.build(clean_points)
+                # Mark detected spike/hazard coordinates directly into 2.5D Quadtree leaf costs (cost = 255)
+                if thin_hazards:
+                    self.thin_hazard_detector.apply_hazards_to_leaves(leaves, thin_hazards)
                 t_quad = (time.perf_counter() - t_quad_start) * 1000.0
 
                 # 7. Obstacle clustering & Porosity Classification [F1.5]
@@ -464,12 +467,17 @@ def main():
             task.cancel()
 
     # Clean signal handling across POSIX containers (Docker / Kubernetes / Railway / Render) and Windows
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    signals_to_handle = [
+        s for s in (getattr(signal, "SIGINT", None), getattr(signal, "SIGTERM", None))
+        if s is not None
+    ]
+    for sig in signals_to_handle:
+        sig_name = getattr(sig, "name", str(sig))
         try:
-            loop.add_signal_handler(sig, lambda s=sig: shutdown(getattr(s, "name", str(s))))
+            loop.add_signal_handler(sig, lambda name=sig_name: shutdown(name))
         except (NotImplementedError, AttributeError):
             try:
-                signal.signal(sig, lambda s, f: shutdown(getattr(signal.Signals(s), "name", str(s))))
+                signal.signal(sig, lambda s, f, name=sig_name: shutdown(name))
             except Exception:
                 pass
 

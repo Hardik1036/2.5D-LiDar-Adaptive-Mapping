@@ -6,8 +6,6 @@ Extracts 3D bounding boxes, centroids, dimensions, and point sets.
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import numpy as np
-from scipy.spatial import cKDTree
-
 from backend.config import TRACKING
 
 

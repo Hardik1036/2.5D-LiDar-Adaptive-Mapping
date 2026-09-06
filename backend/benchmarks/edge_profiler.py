@@ -103,9 +103,9 @@ def run_benchmark(num_frames: int = 150) -> Dict[str, Any]:
         t1 = time.perf_counter()
         stage_timings["2. Ground Segmentation"].append((t1 - t0) * 1000.0)
 
-        # 3. Thin Hazard & Spike Strip Detection [F1.6]
+        # 3. Thin Hazard & Spike Strip Detection [F1.6] (ThreatNet1D ONNX)
         t0 = time.perf_counter()
-        thin_hazards = thin_detector.detect_low_profile_hazards(ground_pts)
+        thin_hazards = thin_detector.detect_threats(ground_pts)
         t1 = time.perf_counter()
         stage_timings["3. Thin Hazard Detector [F1.6]"].append((t1 - t0) * 1000.0)
 
