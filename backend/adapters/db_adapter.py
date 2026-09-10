@@ -9,7 +9,6 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import DATABASE, DatabaseConfig
-from backend.adapters.telemetry_db import AsyncTelemetryDB
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +25,6 @@ class DatabaseAdapter:
         self.enabled = enabled
         self.client = None
         self._is_connected = False
-        
-        self.sqlite_db = AsyncTelemetryDB()
-        
         self._memory_store: Dict[str, Any] = {
             self.config.KEY_POSE: json.dumps({"x": 0.0, "y": 0.0, "z": 0.0, "yaw": 0.0}),
             self.config.KEY_TRACKS: json.dumps([]),
@@ -41,9 +37,7 @@ class DatabaseAdapter:
     def _connect(self):
         """Attempts connection to Redis with short socket timeout."""
         try:
-            # Load Redis lazily so the adapter remains usable when the optional
-            # Redis client dependency is not installed.
-            redis = __import__("redis")
+            import redis
             self.client = redis.Redis(
                 host=self.config.REDIS_HOST,
                 port=self.config.REDIS_PORT,
@@ -127,13 +121,6 @@ class DatabaseAdapter:
         payload = json.dumps(track_list)
         self._memory_store[self.config.KEY_TRACKS] = payload
 
-        # Log to SQLite FIRST to avoid being skipped by the Redis returns below.
-        # Some telemetry DB implementations do not expose a log_tracks method,
-        # so guard the call to keep compatibility with both interfaces.
-        log_tracks = getattr(self.sqlite_db, "log_tracks", None)
-        if callable(log_tracks):
-            log_tracks(track_list)
-
         if self._is_connected and self.client is not None:
             try:
                 self.client.set(self.config.KEY_TRACKS, payload)
@@ -141,7 +128,6 @@ class DatabaseAdapter:
             except Exception as e:
                 logger.debug("Redis write error for %s: %s", self.config.KEY_TRACKS, e)
                 return False
-        
         return True
 
     def get_active_tracks(self) -> List[Dict[str, Any]]:
@@ -169,14 +155,6 @@ class DatabaseAdapter:
         Maintains a rolling ring buffer capped at 100 entries.
         """
         payload = json.dumps(stats)
-        
-        # Proper indentation fixed here
-        self.sqlite_db.log_health(
-            fps=stats.get("fps", 0.0),
-            latency=stats.get("latency_ms", 0.0),
-            cells=stats.get("cell_count", 0),
-            ram_mb=(stats.get("cell_count", 0) * 64) / (1024.0 * 1024.0)
-        )
         
         # Local memory ring buffer
         mem_stream = self._memory_store.setdefault(self.config.KEY_TELEMETRY, [])

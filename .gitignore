@@ -52,9 +52,3 @@ htmlcov/
 *~
 .DS_Store
 Thumbs.db
-
-# Ignore local SQLite databases and Windows shortcuts
-*.db
-*.db-wal
-*.db-shm
-*.lnk
