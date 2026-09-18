@@ -144,3 +144,49 @@ def test_numpy_fallback():
     cand_indices, probs = detector.predict_probabilities(ground)
     assert len(cand_indices) > 0
     assert len(probs) == len(cand_indices)
+    assert np.max(probs) > 0.75, f"Fallback probabilities should exceed threshold 0.75, got max {np.max(probs):.4f}"
+
+    hazards = detector.detect_threats(ground)
+    assert len(hazards) > 0, "Fallback should detect thin hazard clusters exceeding threshold"
+    assert hazards[0]["cost"] == 255
+    assert hazards[0]["threat_probability"] > 0.75
+
+
+
+def test_warmup_inference_failure_disables_session(monkeypatch):
+    """Verifies that if ONNX warmup inference raises an exception, the session is disabled (None) and falls back to NumPy."""
+    from unittest.mock import MagicMock
+    import onnxruntime as ort
+
+    orig_init = ort.InferenceSession
+
+    def mock_session_factory(*args, **kwargs):
+        mock_sess = MagicMock()
+        mock_sess.get_inputs.return_value = [MagicMock(name="input", spec=["name"])]
+        mock_sess.get_inputs.return_value[0].name = "input"
+        mock_sess.get_outputs.return_value = [MagicMock(name="output", spec=["name"])]
+        mock_sess.get_outputs.return_value[0].name = "output"
+        # Simulate warmup failure
+        mock_sess.run.side_effect = RuntimeError("Warmup inference dimension mismatch")
+        return mock_sess
+
+    monkeypatch.setattr(ort, "InferenceSession", mock_session_factory)
+
+    detector = ThinHazardDetector()
+    assert detector.session is None, "Session must be disabled (None) when warmup fails"
+
+    # Should still successfully run predictions via NumPy fallback
+    ground = np.array([
+        [0.0, 0.0, 0.0, 0.2],
+        [1.0, 0.0, 0.0, 0.2],
+        [0.0, 1.0, 0.0, 0.2],
+        [1.0, 1.0, 0.0, 0.2],
+        # Spike cluster
+        [0.5, 0.5, 0.035, 0.95],
+        [0.52, 0.5, 0.035, 0.95],
+        [0.54, 0.5, 0.035, 0.95],
+    ], dtype=np.float32)
+    cand_indices, probs = detector.predict_probabilities(ground)
+    assert len(cand_indices) > 0
+    assert len(probs) == len(cand_indices)
+

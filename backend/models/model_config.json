@@ -1,0 +1,50 @@
+{
+    "model_name": "Lightweight SalsaNext-style LiDAR Segmentation Model",
+    "architecture": "LightweightSalsaNext",
+    "input": {
+        "raw_point_format": "[x, y, z, intensity]",
+        "raw_shape": "(N, 4)",
+        "channels": [
+            "Range",
+            "X",
+            "Y",
+            "Z",
+            "Intensity"
+        ],
+        "num_channels": 5
+    },
+    "range_image": {
+        "height": 64,
+        "width": 1024,
+        "fov_up_degrees": 17.02,
+        "fov_down_degrees": -16.44
+    },
+    "output": {
+        "num_classes": 4,
+        "shape": "(N,)",
+        "labels": {
+            "0": "Drivable Ground",
+            "1": "Passable Vegetation",
+            "2": "Rigid Hazard",
+            "3": "Dynamic Target"
+        },
+        "invalid_label": -1
+    },
+    "training": {
+        "epochs": 30,
+        "optimizer": "AdamW",
+        "initial_learning_rate": 0.001,
+        "weight_decay": 0.0001,
+        "scheduler": "CosineAnnealingLR"
+    },
+    "performance": {
+        "point_accuracy": 0.9419,
+        "point_mean_iou": 0.8411,
+        "class_iou": {
+            "0": 0.7489,
+            "1": 0.8483,
+            "2": 0.9219,
+            "3": 0.8451
+        }
+    }
+}

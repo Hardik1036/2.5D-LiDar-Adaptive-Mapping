@@ -5,8 +5,9 @@ Measurement: z = [x, y]^T
 Includes Hungarian data association (linear_sum_assignment) and Euclidean gating.
 """
 
+import threading
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -21,18 +22,25 @@ class SingleObjectKalmanFilter:
     """
     __slots__ = ("x", "y", "vx", "vy", "px", "py", "pvx", "pvy", "dt", "q_pos", "q_vel", "r_meas")
 
-    def __init__(self, init_x: float, init_y: float, dt: float = TRACKING.DT):
+    def __init__(
+        self,
+        init_x: float,
+        init_y: float,
+        dt: float = TRACKING.DT,
+        init_vx: float = 0.0,
+        init_vy: float = 0.0,
+    ):
         self.dt = float(dt)
         self.x = float(init_x)
         self.y = float(init_y)
-        self.vx = 0.0
-        self.vy = 0.0
+        self.vx = float(init_vx) if (init_vx is not None and np.isfinite(init_vx)) else 0.0
+        self.vy = float(init_vy) if (init_vy is not None and np.isfinite(init_vy)) else 0.0
 
         # State variances
         self.px = 0.5
         self.py = 0.5
-        self.pvx = 2.0
-        self.pvy = 2.0
+        self.pvx = 2.0 if (self.vx == 0.0 and self.vy == 0.0) else 1.0
+        self.pvy = 2.0 if (self.vx == 0.0 and self.vy == 0.0) else 1.0
 
         # Noise parameters
         self.q_pos = 0.05
@@ -57,7 +65,13 @@ class SingleObjectKalmanFilter:
         self.pvx += self.q_vel
         self.pvy += self.q_vel
 
-    def update(self, meas_x: float, meas_y: float):
+    def update(
+        self,
+        meas_x: float,
+        meas_y: float,
+        meas_vx: Optional[float] = None,
+        meas_vy: Optional[float] = None,
+    ):
         """Incorporate new 2D position measurement in < 0.001 ms."""
         # X dimension update
         kx = self.px / (self.px + self.r_meas)
@@ -66,6 +80,7 @@ class SingleObjectKalmanFilter:
         self.x += kx * rx
         self.vx += kvx * rx
         self.px *= (1.0 - kx)
+        self.pvx = max(0.05, self.pvx * max(0.1, 1.0 - kvx * self.dt))
 
         # Y dimension update
         ky = self.py / (self.py + self.r_meas)
@@ -74,6 +89,13 @@ class SingleObjectKalmanFilter:
         self.y += ky * ry
         self.vy += kvy * ry
         self.py *= (1.0 - ky)
+        self.pvy = max(0.05, self.pvy * max(0.1, 1.0 - kvy * self.dt))
+
+        # Optional direct velocity blending if available
+        if meas_vx is not None and np.isfinite(meas_vx):
+            self.vx = 0.7 * self.vx + 0.3 * float(meas_vx)
+        if meas_vy is not None and np.isfinite(meas_vy):
+            self.vy = 0.7 * self.vy + 0.3 * float(meas_vy)
 
 
 @dataclass
@@ -150,86 +172,145 @@ class KalmanTracker:
         self,
         gating_dist: float = TRACKING.GATING_DISTANCE,
         max_age: int = TRACKING.MAX_AGE_BEFORE_DELETION,
+        max_tracks: int = getattr(TRACKING, "MAX_TRACKS", 40),
     ):
         self.gating_dist = gating_dist
         self.max_age = max_age
+        self.max_tracks = max_tracks
         self.tracks: List[TrackedObject] = []
         self._next_id = 1
+        self._lock = threading.RLock()
 
-    def update(self, clusters: List[DetectedCluster], dt: float = TRACKING.DT) -> List[TrackedObject]:
+    def update(
+        self,
+        clusters: Union[List[DetectedCluster], np.ndarray],
+        dt: float = TRACKING.DT,
+    ) -> List[TrackedObject]:
         """
-        Predict and update tracks with new cluster detections.
+        Predict and update tracks with new cluster detections or (M, 9)/(M, >=6) ndarrays.
 
         Args:
-            clusters: List of DetectedCluster instances from current frame.
+            clusters: List of DetectedCluster instances or (M, 9) ndarray from current frame.
             dt: Time delta from previous frame.
 
         Returns:
             List of currently active confirmed tracks.
         """
-        # 1. Predict all existing tracks
-        for track in self.tracks:
-            track.kf.predict(dt=dt)
-            track.age += 1
-            track.time_since_update += 1
+        with self._lock:
+            # Handle numpy array proposal inputs directly
+            if isinstance(clusters, np.ndarray):
+                if clusters.ndim == 1:
+                    clusters = clusters.reshape(1, -1) if len(clusters) > 0 else np.empty((0, 9))
+                cluster_list: List[DetectedCluster] = []
+                for det in clusters:
+                    if len(det) >= 6:
+                        x, y, z = float(det[0]), float(det[1]), float(det[2])
+                        l, w, h = float(det[3]), float(det[4]), float(det[5])
+                        yaw = float(det[6]) if len(det) >= 7 else 0.0
+                        vel = (float(det[7]), float(det[8])) if len(det) >= 9 else None
+                        min_x, max_x = x - l * 0.5, x + l * 0.5
+                        min_y, max_y = y - w * 0.5, y + w * 0.5
+                        min_z, max_z = z - h * 0.5, z + h * 0.5
+                        cluster_list.append(
+                            DetectedCluster(
+                                centroid=(x, y, z),
+                                dimensions=(l, w, h),
+                                bbox=(min_x, max_x, min_y, max_y, min_z, max_z),
+                                point_count=50,
+                                points=np.empty((0, 3), dtype=np.float32),
+                                yaw=yaw,
+                                velocity=vel,
+                            )
+                        )
+                clusters = cluster_list
 
-        n_tracks = len(self.tracks)
-        n_dets = len(clusters)
+            # 1. Predict all existing tracks
+            for track in self.tracks:
+                track.kf.predict(dt=dt)
+                track.age += 1
+                track.time_since_update += 1
 
-        if n_tracks == 0:
-            # All detections become new tentative tracks
-            for cluster in clusters:
-                self._spawn_track(cluster, dt=dt)
-            return self.get_confirmed_tracks()
+            n_tracks = len(self.tracks)
+            n_dets = len(clusters)
 
-        if n_dets == 0:
-            # No detections this frame, prune expired tracks
+            if n_tracks == 0:
+                # All detections become new tentative tracks up to max_tracks
+                for cluster in clusters:
+                    if len(self.tracks) >= self.max_tracks:
+                        break
+                    self._spawn_track(cluster, dt=dt)
+                return self.get_confirmed_tracks()
+
+            if n_dets == 0:
+                # No detections this frame, prune expired tracks
+                self._prune_tracks()
+                return self.get_confirmed_tracks()
+
+            from scipy.spatial.distance import cdist
+
+            # 2. Build cost matrix via vectorized cdist (Euclidean distance on XY plane)
+            track_coords = np.array([[t.x, t.y] for t in self.tracks], dtype=np.float64)
+            det_coords = np.array([c.centroid[:2] for c in clusters], dtype=np.float64)
+            cost_matrix = cdist(track_coords, det_coords)
+
+            # 3. Hungarian association
+            row_indices, col_indices = linear_sum_assignment(cost_matrix)
+
+            assigned_tracks = set()
+            assigned_dets = set()
+
+            for r, c in zip(row_indices, col_indices):
+                if cost_matrix[r, c] <= self.gating_dist:
+                    assigned_tracks.add(r)
+                    assigned_dets.add(c)
+                    track = self.tracks[r]
+                    cluster = clusters[c]
+
+                    # Kalman measurement update (position and optional velocity)
+                    vel = cluster.velocity
+                    vx_meas = vel[0] if vel is not None else None
+                    vy_meas = vel[1] if vel is not None else None
+                    track.kf.update(cluster.centroid[0], cluster.centroid[1], meas_vx=vx_meas, meas_vy=vy_meas)
+                    track.hits += 1
+                    track.time_since_update = 0
+                    track.dimensions = cluster.dimensions
+                    track.z = float(cluster.centroid[2])
+                    track.bbox = cluster.bbox
+                    track.point_count = cluster.point_count
+
+            # 4. Prune expired or diverging tracks before calculating available capacity
             self._prune_tracks()
-            return self.get_confirmed_tracks()
 
-        from scipy.spatial.distance import cdist
-
-        # 2. Build cost matrix via vectorized cdist (Euclidean distance on XY plane)
-        track_coords = np.array([[t.x, t.y] for t in self.tracks], dtype=np.float64)
-        det_coords = np.array([c.centroid[:2] for c in clusters], dtype=np.float64)
-        cost_matrix = cdist(track_coords, det_coords)
-
-        # 3. Hungarian association
-        row_indices, col_indices = linear_sum_assignment(cost_matrix)
-
-        assigned_tracks = set()
-        assigned_dets = set()
-
-        for r, c in zip(row_indices, col_indices):
-            if cost_matrix[r, c] <= self.gating_dist:
-                assigned_tracks.add(r)
-                assigned_dets.add(c)
-                track = self.tracks[r]
-                cluster = clusters[c]
-
-                # Kalman measurement update
-                track.kf.update(cluster.centroid[0], cluster.centroid[1])
-                track.hits += 1
-                track.time_since_update = 0
-                track.dimensions = cluster.dimensions
-                track.z = float(cluster.centroid[2])
-                track.bbox = cluster.bbox
-                track.point_count = cluster.point_count
-
-        # 4. Unassigned detections spawn new tracks (capped at 40 active tracks)
-        if len(self.tracks) < 40:
+            # 5. Unassigned detections spawn new tracks (strictly capped at max_tracks)
             for j in range(n_dets):
+                if len(self.tracks) >= self.max_tracks:
+                    break
                 if j not in assigned_dets:
                     self._spawn_track(clusters[j], dt=dt)
 
-        # 5. Prune expired or diverging tracks
-        self._prune_tracks()
-
-        return self.get_confirmed_tracks()
+            return self.get_confirmed_tracks()
 
     def _spawn_track(self, cluster: DetectedCluster, dt: float):
         """Creates a new tentative track."""
-        kf = SingleObjectKalmanFilter(init_x=cluster.centroid[0], init_y=cluster.centroid[1], dt=dt)
+        if len(self.tracks) >= self.max_tracks:
+            return
+        init_vx = (
+            float(cluster.velocity[0])
+            if cluster.velocity is not None and len(cluster.velocity) > 0 and np.isfinite(cluster.velocity[0])
+            else 0.0
+        )
+        init_vy = (
+            float(cluster.velocity[1])
+            if cluster.velocity is not None and len(cluster.velocity) > 1 and np.isfinite(cluster.velocity[1])
+            else 0.0
+        )
+        kf = SingleObjectKalmanFilter(
+            init_x=cluster.centroid[0],
+            init_y=cluster.centroid[1],
+            dt=dt,
+            init_vx=init_vx,
+            init_vy=init_vy,
+        )
         track = TrackedObject(
             track_id=self._next_id,
             kf=kf,
@@ -258,13 +339,16 @@ class KalmanTracker:
 
     def get_confirmed_tracks(self) -> List[TrackedObject]:
         """Returns only confirmed active tracks."""
-        return [t for t in self.tracks if t.is_confirmed and t.time_since_update == 0]
+        with self._lock:
+            return [t for t in self.tracks if t.is_confirmed and t.time_since_update == 0]
 
     def get_dynamic_tracks(self) -> List[TrackedObject]:
         """Returns tracks confirmed and moving above speed threshold."""
-        return [t for t in self.tracks if t.is_dynamic and t.time_since_update == 0]
+        with self._lock:
+            return [t for t in self.tracks if t.is_dynamic and t.time_since_update == 0]
 
 
 # Backwards-compatible aliases
 MultiObjectTracker = KalmanTracker
 TrackedObstacle = TrackedObject
+

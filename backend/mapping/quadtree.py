@@ -171,10 +171,11 @@ class AdaptiveQuadtree:
 
         return node
 
-    def build(self, points: np.ndarray) -> List[QuadtreeNode]:
+    def build(self, points: np.ndarray, point_costs: Optional[np.ndarray] = None) -> List[QuadtreeNode]:
         """
         Constructs the adaptive 2.5D variable-resolution quadtree.
         Vectorized coarse grid evaluation and direct quadrant refinement in < 6 ms.
+        Optionally ingests per-point costs (e.g. lethal 255 for detected thin threats).
         """
         self.leaves.clear()
         if len(points) == 0:
@@ -197,6 +198,12 @@ class AdaptiveQuadtree:
         np.minimum.at(z_min, cell_keys, z)
         np.maximum.at(z_max, cell_keys, z)
         np.add.at(counts, cell_keys, 1)
+
+        if point_costs is not None and len(point_costs) == len(points):
+            c_costs = np.zeros(total_coarse, dtype=np.int32)
+            np.maximum.at(c_costs, cell_keys, point_costs)
+        else:
+            c_costs = None
 
         active = counts >= self.min_pts
         delta_z = z_max - z_min
@@ -227,7 +234,7 @@ class AdaptiveQuadtree:
             st.point_count = int(c_counts[i])
             st.mean_z = (min_z_val + max_z_val) / 2.0
 
-            node.cost = 0
+            node.cost = int(c_costs[key]) if c_costs is not None else 0
             self.leaves.append(node)
 
         # 3. Vectorized Sub-quadrant Refinement for Rough Cells
@@ -256,6 +263,12 @@ class AdaptiveQuadtree:
             np.maximum.at(fz_max, fine_keys, rz)
             np.add.at(f_counts, fine_keys, 1)
 
+            if point_costs is not None and len(point_costs) == len(points):
+                f_costs = np.zeros(total_fine, dtype=np.int32)
+                np.maximum.at(f_costs, fine_keys, point_costs[rough_mask])
+            else:
+                f_costs = None
+
             fine_active = f_counts >= 1
             active_fine_keys = np.where(fine_active)[0]
 
@@ -278,16 +291,32 @@ class AdaptiveQuadtree:
                     point_count=int(f_counts[active_fine_keys[i]]),
                     mean_z=float((fine_min_arr[i] + fine_max_arr[i]) / 2.0),
                 )
+                f_cost = int(f_costs[active_fine_keys[i]]) if f_costs is not None else 0
                 self.leaves.append(QuadtreeNode(
                     x=float(fine_cx[i]),
                     y=float(fine_cy[i]),
                     size=fine_res,
                     depth=2,
                     stats=f_stats,
+                    cost=f_cost,
                     is_leaf=True,
                 ))
 
         return self.leaves
+
+    def apply_point_costs(self, leaves: List[QuadtreeNode], points: np.ndarray, cost: int = 255) -> None:
+        """
+        Directly assigns cost to any leaf nodes containing any of the given points.
+        """
+        if not leaves or len(points) == 0:
+            return
+        pts = np.asarray(points, dtype=np.float32)
+        px = pts[:, 0]
+        py = pts[:, 1]
+        for leaf in leaves:
+            in_cell = (px >= leaf.min_x) & (px <= leaf.max_x) & (py >= leaf.min_y) & (py <= leaf.max_y)
+            if np.any(in_cell):
+                leaf.cost = max(leaf.cost, cost)
 
     def get_statistics(self) -> dict:
         """Returns structural stats on the current tree."""

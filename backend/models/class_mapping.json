@@ -1,0 +1,7 @@
+{
+    "0": "Drivable Ground",
+    "1": "Passable Vegetation",
+    "2": "Rigid Hazard",
+    "3": "Dynamic Target",
+    "-1": "Unlabeled / Invalid"
+}

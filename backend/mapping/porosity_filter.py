@@ -46,29 +46,29 @@ class PorosityClassifier:
             return (False, self.rigid_cost)
 
         z = points[:, 2]
-        delta_z = float(np.max(z) - np.min(z))
+        delta_z = float(np.ptp(z)) if len(z) > 0 else 0.0
+
+        # Porous Vegetation criteria:
+        # Fast exit: if not within vegetation height bounds [0.15m, 1.30m], immediately rigid
+        if not (self.min_veg_height <= delta_z <= self.max_veg_height):
+            return (False, self.rigid_cost)
 
         # Check intensity if available in 4th column
         mean_intensity = 0.5
         if points.shape[1] >= 4:
             mean_intensity = float(np.mean(points[:, 3]))
 
-        # Calculate horizontal dispersion vs vertical span
+        if mean_intensity >= 0.75:
+            return (False, self.rigid_cost)
+        if mean_intensity <= self.intensity_thresh:
+            return (True, self.porous_cost)
+
+        # Calculate horizontal dispersion vs vertical span for borderline intensity
         xy = points[:, :2]
         spread_xy = float(np.var(xy[:, 0]) + np.var(xy[:, 1]))
         var_z = float(np.var(z))
 
-        # Porous Vegetation criteria:
-        # 1. Vertical height falls within typical crop / grass / bush span [0.15m, 1.30m]
-        # 2. Diffuse reflection intensity (foliage scatters light, resulting in lower return)
-        # 3. Dispersed point cloud (diffuse penetration rather than a sharp vertical line/wall)
-        is_height_veg = self.min_veg_height <= delta_z <= self.max_veg_height
-        is_diffuse = (mean_intensity <= self.intensity_thresh) or (spread_xy > 0.02 and var_z > 0.005)
-
-        # Rigid barrier checks:
-        # A tree trunk has narrow horizontal radius (low spread_xy) with a solid height,
-        # or boulder has very high intensity and solid surface termination.
-        if is_height_veg and is_diffuse and (mean_intensity < 0.75):
+        if spread_xy > 0.02 and var_z > 0.005:
             return (True, self.porous_cost)
 
         return (False, self.rigid_cost)

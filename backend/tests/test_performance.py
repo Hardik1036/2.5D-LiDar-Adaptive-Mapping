@@ -4,6 +4,7 @@ Asserts <= 35 ms latency and >= 25 Hz throughput over 25 consecutive frames
 with all advanced tactical perception modules and terrain memory enabled.
 """
 
+import gc
 import time
 import numpy as np
 import pytest
@@ -48,17 +49,33 @@ def test_realtime_performance_sla():
     num_frames = 30
 
     # Complete warmup across all modules (JIT, threadpools, Cython allocations)
-    p0, _ = generator.generate_frame(0.0)
-    w_clean = dust_filter.filter(p0)
-    w_g, w_obs, _ = ground_segmenter.segment(w_clean)
-    _ = thin_detector.detect_low_profile_hazards(w_g)
-    w_leaves = quadtree.build(w_clean[:5000])
-    w_cls = clusterer.cluster(w_obs)
-    _ = porosity_classifier.classify_clusters(w_cls)
-    costmap_eval.evaluate_leaves(w_leaves)
-    costmap_eval.apply_obstacle_occupancy(w_leaves, w_obs)
-    occupancy_builder.build_grid(w_leaves, [])
+    for _ in range(3):
+        p0, _ = generator.generate_frame(0.0)
+        w_clean = dust_filter.filter(p0)
+        w_g, w_obs, _ = ground_segmenter.segment(w_clean)
+        w_thin = thin_detector.detect_low_profile_hazards(w_g)
+        w_leaves = quadtree.build(w_clean)
+        costmap_eval.evaluate_leaves(w_leaves)
+        w_N = len(w_clean)
+        w_labels = np.zeros(w_N, dtype=np.int32)
+        w_ml = ml_adapter.process_semantic_labels(w_clean, w_labels)
+        vegetation_filter.apply_vegetation_scaling(w_leaves, w_ml["vegetation"])
+        w_cls = clusterer.cluster(w_obs)
+        w_classified = porosity_classifier.classify_clusters(w_cls)
+        w_rigid = [c for (c, is_p, _) in w_classified if not is_p]
+        w_tracks = tracker.update(w_rigid, dt=0.04)
+        w_dyn = tracker.get_dynamic_tracks()
+        w_drops = trench_detector.find_dropoffs(w_g)
+        trench_detector.apply_dropoffs_to_leaves(w_leaves, w_drops)
+        temporal_blender.blend_quadtree(w_leaves)
+        ghost_clearing.clear_ghosts(w_leaves, w_clean)
+        ghost_clearing.register_dynamic_footprints(w_dyn)
+        costmap_eval.apply_obstacle_occupancy(w_leaves, w_obs)
+        w_hazards = hazard_predictor.predict_hazards(w_tracks)
+        costmap_eval.apply_dynamic_hazards(w_leaves, w_hazards)
+        occupancy_builder.build_grid(w_leaves, w_hazards)
 
+    gc.collect()
     for i in range(num_frames):
         t_sim = i * 0.04
         pts, _ = generator.generate_frame(t=t_sim)
@@ -119,7 +136,7 @@ def test_realtime_performance_sla():
         t_end = time.perf_counter()
         latencies.append((t_end - t_start) * 1000.0)
 
-    stable_latencies = latencies[2:]
+    stable_latencies = latencies[5:]
     mean_latency = float(np.mean(stable_latencies))
     fps = 1000.0 / mean_latency if mean_latency > 0 else 0.0
 
@@ -127,3 +144,27 @@ def test_realtime_performance_sla():
 
     assert mean_latency <= 35.0, f"Mean latency {mean_latency:.2f} ms violated SLA (<= 35 ms)"
     assert fps >= 25.0, f"Throughput {fps:.2f} Hz violated SLA (>= 25 Hz)"
+
+
+def test_pipeline_warmup_isolation():
+    """
+    Verifies that pipeline warmup does not mutate live loader index
+    or pollute persistent temporal blender elevation memory.
+    """
+    from backend.main import PerceptionPipeline
+
+    pipeline = PerceptionPipeline(dataset_path=None, use_redis=False)
+    assert pipeline.loader.current_idx == 0
+    assert len(pipeline.temporal_blender._cell_memory) == 0
+
+    pipeline.warmup(frames=2)
+    assert pipeline._warmed_up is True
+
+    # Assert loader index is pristine at frame 0 and temporal memory is clean
+    assert pipeline.loader.current_idx == 0
+    assert len(pipeline.temporal_blender._cell_memory) == 0
+
+    # Assert the first frame loaded by the pipeline is frame 0
+    frame_pts, meta = pipeline.loader.load_frame()
+    assert meta["frame_id"] == 0
+

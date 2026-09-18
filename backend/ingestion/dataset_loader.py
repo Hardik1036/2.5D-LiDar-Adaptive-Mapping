@@ -46,6 +46,12 @@ class DatasetLoader:
             else:
                 raise FileNotFoundError(f"No valid .bin or .pcd files discovered in: {self.dataset_path}")
 
+    def reset(self):
+        """Resets stream index to frame 0 and reinitializes synthetic generator if active."""
+        self.current_idx = 0
+        if self.synthetic_gen is not None:
+            self.synthetic_gen = SyntheticLiDARGenerator()
+
     def _discover_files(self):
         """Discovers all .bin and .pcd files under the dataset path."""
         if self.dataset_path.is_file():

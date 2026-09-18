@@ -69,8 +69,47 @@ class CostmapEvaluator:
 
     def evaluate_leaves(self, leaves: List[QuadtreeNode]):
         """Evaluates cost for all leaf nodes in place."""
+        lethal_step = self.lethal_step
+        max_step = self.max_step
+        lethal_slope = self.lethal_slope
+        max_slope = self.max_slope
+        safe_max = self.safe_max
+        caution_max = self.caution_max
+        lethal_val = self.lethal_val
+        step_diff = lethal_step - max_step
+        slope_diff = lethal_slope - max_slope
+        c_minus_s = caution_max - safe_max
+        inv_max_slope = (safe_max / max_slope) if max_slope > 0 else 0.0
+
         for leaf in leaves:
-            leaf.cost = self.evaluate_node_cost(leaf)
+            if leaf.cost >= lethal_val:
+                continue
+
+            stats = leaf.stats
+            if stats is None:
+                leaf.cost = 0
+                continue
+
+            delta_z = stats.delta_z
+            if delta_z >= lethal_step:
+                leaf.cost = lethal_val
+                continue
+
+            slope = stats.slope
+            if slope >= lethal_slope:
+                leaf.cost = lethal_val
+                continue
+
+            step_ratio = ((delta_z - max_step) / step_diff) if (step_diff > 0 and delta_z > max_step) else 0.0
+
+            if slope <= max_slope:
+                slope_cost = slope * inv_max_slope
+            else:
+                slope_cost = safe_max + ((slope - max_slope) / slope_diff) * c_minus_s
+
+            combined = slope_cost if slope_cost > step_ratio * caution_max else step_ratio * caution_max
+            val = int(combined)
+            leaf.cost = 255 if val > 255 else (0 if val < 0 else val)
 
     def apply_obstacle_occupancy(self, leaves: List[QuadtreeNode], obstacle_points: np.ndarray):
         """

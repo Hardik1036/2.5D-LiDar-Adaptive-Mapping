@@ -115,6 +115,13 @@ class ThinHazardDetector:
             self.session = ort.InferenceSession(resolved_path, sess_opts, providers=providers)
             self.input_name = self.session.get_inputs()[0].name
             self.output_name = self.session.get_outputs()[0].name
+            # 1-shot warmup to prevent first-frame latency spikes
+            try:
+                self.session.run(None, {self.input_name: self._inp_buf})
+            except Exception as e:
+                logger.warning(f"ThreatNet1D warmup inference failed: {e}. Disabling session and falling back to NumPy.")
+                self.session = None
+                return
             logger.info(f"ThreatNet1D ONNX session initialized successfully from {resolved_path}")
         except Exception as e:
             logger.warning(f"Failed to load ONNX session from {resolved_path}: {e}. Falling back to NumPy.")
@@ -201,8 +208,8 @@ class ThinHazardDetector:
             cand_int = np.full(len(cand_indices), 0.2, dtype=np.float32)
 
         # Scale features for ThreatNet1D receptive field
-        norm_dz = cand_dz * 150.0
-        norm_i = cand_int * 16.0
+        norm_dz = cand_dz * 5.5
+        norm_i = cand_int
 
         # 3. ONNX Runtime batch inference with ground baseline slot buffers
         if self.session is not None:
@@ -234,8 +241,8 @@ class ThinHazardDetector:
                 self._inp_buf[0, 0, buf_pos:buf_pos+slot_size] = sub_dz[s*slot_size:(s+1)*slot_size]
                 self._inp_buf[0, 1, buf_pos:buf_pos+slot_size] = sub_i[s*slot_size:(s+1)*slot_size]
 
-            logits = self.session.run(None, {self.input_name: self._inp_buf})[0]
-            probs = 1.0 / (1.0 + np.exp(-logits[0]))
+            logits = self.session.run(None, {self.input_name: self._inp_buf})[0].squeeze()
+            probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -50.0, 50.0)))
 
             for s in range(n_slots):
                 buf_pos = 10 + s * step
@@ -246,7 +253,7 @@ class ThinHazardDetector:
             return cand_indices, threat_probs
 
         # 4. Fast Vectorized NumPy Fallback
-        z_contrast = (norm_dz / 15.0) * 0.4 + (norm_i / 4.0) * 0.6
+        z_contrast = (norm_dz / 0.55) * 1.5 + (norm_i / 0.25) * 1.2
         fallback_probs = 1.0 / (1.0 + np.exp(-(z_contrast - 2.5)))
         return cand_indices, fallback_probs.astype(np.float32)
 

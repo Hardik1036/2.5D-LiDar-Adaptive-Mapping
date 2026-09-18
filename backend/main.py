@@ -22,6 +22,7 @@ Target: >= 25 Hz throughput (< 35 ms frame latency).
 
 import argparse
 import asyncio
+import gc
 import logging
 import os
 from pathlib import Path
@@ -29,6 +30,11 @@ import signal
 import sys
 import time
 from typing import Optional
+
+try:
+    import psutil
+except ImportError:
+    psutil = None
 
 import numpy as np
 
@@ -49,10 +55,12 @@ from backend.mapping.temporal_blender import TemporalMapBlender
 from backend.mapping.vegetation_filter import VegetationFilter
 from backend.server.payload_builder import PayloadBuilder
 from backend.server.websocket_server import TelemetryWebSocketServer
+from backend.telemetry.telemetry_db import AsyncTelemetryDB
 from backend.tracking.clustering import EuclideanClusterer
 from backend.tracking.ghost_clearing import GhostClearing
 from backend.tracking.kalman_tracker import KalmanTracker
 from backend.tracking.trajectory_rollout import TrajectoryRollout
+from backend.utils.synthetic_generator import SyntheticLiDARGenerator
 
 # Configure logging
 logging.basicConfig(
@@ -128,15 +136,67 @@ class PerceptionPipeline:
         # Server & Streaming
         self.server = TelemetryWebSocketServer(host=host, port=port)
         self.payload_builder = PayloadBuilder()
+        self.telemetry_db = AsyncTelemetryDB()
 
         # Metrics
         self.frame_count = 0
         self.rolling_fps = 0.0
         self.rolling_latency_ms = 0.0
+        self._last_ram_mb: Optional[float] = None
+        self._last_vram_mb: Optional[float] = None
+        self._warmed_up = False
+
+    def warmup(self, frames: int = 2) -> None:
+        """Pre-warms pipeline buffers, JIT compilations, and model inference sessions."""
+        try:
+            # 1. Obtain disposable frame input without advancing self.loader
+            if self.loader.file_list:
+                first_file = self.loader.file_list[0]
+                if first_file.suffix.lower() == ".bin":
+                    raw_points = self.loader.load_bin_file(first_file)
+                elif first_file.suffix.lower() == ".pcd":
+                    raw_points = self.loader.load_pcd_file(first_file)
+                else:
+                    raw_points, _ = self.loader.load_frame(frame_idx=0)
+            elif self.loader.synthetic_gen is not None:
+                disposable_gen = SyntheticLiDARGenerator()
+                raw_points, _ = disposable_gen.generate_frame(timestamp=0.0)
+            else:
+                raw_points = np.zeros((500, 4), dtype=np.float32)
+
+            mask = (
+                (raw_points[:, 0] >= BOUNDS.X_MIN) & (raw_points[:, 0] <= BOUNDS.X_MAX) &
+                (raw_points[:, 1] >= BOUNDS.Y_MIN) & (raw_points[:, 1] <= BOUNDS.Y_MAX) &
+                (raw_points[:, 2] >= BOUNDS.Z_MIN) & (raw_points[:, 2] <= BOUNDS.Z_MAX)
+            )
+            raw_points = raw_points[mask]
+
+            # 2. Use isolated stateful components so live persistent terrain is not mutated
+            isolated_blender = TemporalMapBlender()
+
+            for _ in range(frames):
+                clean_points = self.dust_filter.filter(raw_points.copy())
+                ground_pts, obstacle_pts, _ = self.ground_seg.segment(clean_points)
+                self.thin_hazard_detector.detect_threats(ground_pts)
+                self.ml_adapter.segment_point_cloud(clean_points)
+                leaves = self.quadtree.build(clean_points)
+                self.costmap.evaluate_leaves(leaves)
+                isolated_blender.blend_quadtree(leaves)
+
+            # 3. Clean up and ensure live components are in a fresh initial state
+            self.temporal_blender.clear()
+            if hasattr(self.loader, "reset"):
+                self.loader.reset()
+            gc.collect()
+            self._warmed_up = True
+        except Exception as e:
+            logger.debug(f"Pipeline warmup exception: {e}")
 
     async def run(self, max_frames: Optional[int] = None, pacing: bool = True):
         """Executes the asynchronous real-time perception loop."""
         logger.info(f"Initializing tactical perception pipeline. Target: {self.target_fps} Hz")
+        if not self._warmed_up:
+            self.warmup()
         if self.db_adapter.enabled:
             logger.info(f"Database Adapter enabled. Redis Connected: {self.db_adapter.is_connected}")
         if self.ros_output:
@@ -176,18 +236,31 @@ class PerceptionPipeline:
                 thin_hazards = self.thin_hazard_detector.detect_threats(ground_pts)
                 t_thin = (time.perf_counter() - t_thin_start) * 1000.0
 
-                # 5. ML Perception Adapter (Semantic label partitioning & Pillar detections)
+                # 5. ML Perception Adapter (Model 1 SalsaNext Semantic Segmentation & Model 2 ThreatNet1D)
                 t_ml_start = time.perf_counter()
                 semantic_labels = meta.get("semantic_labels") if isinstance(meta, dict) else None
+                if semantic_labels is None:
+                    semantic_labels = self.ml_adapter.segment_point_cloud(clean_points)
                 ml_subsets = self.ml_adapter.process_semantic_labels(clean_points, semantic_labels)
                 pillar_dets = self.ml_adapter.process_pillar_detections(
                     meta.get("dynamic_detections") if isinstance(meta, dict) else None
                 )
+
+                # Low-profile threat detection via Model 2 (ThreatNet1D) on isolated semantic ground
+                ground_points = clean_points[semantic_labels == 0]
+                ground_plane = self.thin_hazard_detector.fit_ground_plane(ground_points) if len(ground_points) >= 3 else None
+                threat_mask = self.ml_adapter.detect_low_profile_threats(ground_points, ground_plane)
+                threat_points = ground_points[threat_mask]
                 t_ml = (time.perf_counter() - t_ml_start) * 1000.0
 
                 # 6. Adaptive 2.5D Quadtree construction
                 t_quad_start = time.perf_counter()
-                leaves = self.quadtree.build(clean_points)
+                point_costs = np.zeros(len(clean_points), dtype=np.int32)
+                if len(threat_points) > 0:
+                    ground_indices = np.nonzero(semantic_labels == 0)[0]
+                    point_costs[ground_indices[threat_mask]] = 255
+
+                leaves = self.quadtree.build(clean_points, point_costs=point_costs)
                 # Mark detected spike/hazard coordinates directly into 2.5D Quadtree leaf costs (cost = 255)
                 if thin_hazards:
                     self.thin_hazard_detector.apply_hazards_to_leaves(leaves, thin_hazards)
@@ -241,6 +314,8 @@ class PerceptionPipeline:
                 all_hazards = list(rollout_hazards)
                 for th in thin_hazards:
                     all_hazards.append({"x": th["centroid"][0], "y": th["centroid"][1], "radius": th["radius"], "cost": 255})
+                for tp in threat_points:
+                    all_hazards.append({"x": float(tp[0]), "y": float(tp[1]), "radius": 0.25, "cost": 255})
                 for d in dropoffs:
                     all_hazards.append({"x": d["x"], "y": d["y"], "radius": d["radius"], "cost": 255})
 
@@ -331,6 +406,31 @@ class PerceptionPipeline:
                 )
                 # Non-blocking concurrent broadcast (never stalls perception loop)
                 self.server.broadcast_nowait(payload)
+                
+                # 15. Async Database Telemetry Logging
+                ram_mb = None
+                if psutil:
+                    try:
+                        ram_mb = psutil.Process(os.getpid()).memory_info().rss / 1048576.0
+                    except Exception:
+                        ram_mb = None
+
+                # Retain last valid metric sample instead of defaulting to 0.0
+                if ram_mb is not None:
+                    self._last_ram_mb = ram_mb
+                else:
+                    ram_mb = self._last_ram_mb
+
+                vram_mb = self._last_vram_mb  # Retain last valid or None; never default to 0.0
+
+                self.telemetry_db.log_health(
+                    fps=self.rolling_fps,
+                    latency=self.rolling_latency_ms,
+                    cells=len(leaves),
+                    ram_mb=ram_mb,
+                    vram_mb=vram_mb
+                )
+                self.telemetry_db.log_tracks(active_tracks)
 
                 # Cloud health telemetry logging to stdout every 100 frames
                 if self.frame_count % 100 == 0:
@@ -380,6 +480,7 @@ class PerceptionPipeline:
             logger.info("Perception loop cancelled.")
         finally:
             await self.server.stop()
+            self.telemetry_db.close()
             total_time = time.perf_counter() - start_loop_time
             logger.info(
                 f"Perception pipeline terminated. Processed {self.frame_count} frames "

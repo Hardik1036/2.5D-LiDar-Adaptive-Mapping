@@ -109,3 +109,153 @@ def test_evaluate_thin_hazards_empty():
     assert len(res["threat_mask"]) == 0
     assert len(res["probabilities"]) == 0
     assert len(res["threat_points"]) == 0
+
+
+def test_segment_point_cloud():
+    """Verifies Model 1 point cloud segmentation produces valid classes."""
+    adapter = MLPerceptionAdapter()
+
+    # Empty array
+    assert len(adapter.segment_point_cloud(np.empty((0, 4)))) == 0
+
+    # Non-empty points
+    pts = np.array([
+        [0.0, 0.0, -1.6, 0.2],   # ground
+        [1.0, 2.0, 0.5, 0.4],    # vegetation / low obstacle
+        [2.0, 1.0, 1.5, 0.8],    # rigid obstacle
+    ], dtype=np.float32)
+
+    labels = adapter.segment_point_cloud(pts)
+    assert len(labels) == 3
+    assert labels.dtype == np.int32
+    assert all(l in (0, 1, 2, 3) for l in labels)
+
+
+def test_detect_low_profile_threats():
+    """Verifies Model 2 ThreatNet1D low-profile hazard detection."""
+    adapter = MLPerceptionAdapter()
+
+    # Empty
+    assert len(adapter.detect_low_profile_threats(np.array([]), np.array([]))) == 0
+
+    # Nominal ground
+    residuals = np.array([0.002, 0.005, 0.035], dtype=np.float32)
+    intensities = np.array([0.15, 0.20, 0.95], dtype=np.float32)
+
+    threat_mask = adapter.detect_low_profile_threats(residuals, intensities)
+    assert len(threat_mask) == 3
+    assert threat_mask.dtype == bool
+    # Synthetic spike strip candidate (3.5 cm elevation, 0.95 intensity) should trigger
+    assert threat_mask[2] == True
+
+
+def test_dynamic_path_resolution():
+    """Verifies dynamic model path resolution from 'models' or 'backend/models'."""
+    adapter_models = MLPerceptionAdapter(model_dir="models")
+    adapter_backend = MLPerceptionAdapter(model_dir="backend/models")
+
+    assert adapter_models.threat_threshold == pytest.approx(0.75, abs=1e-3)
+    assert adapter_backend.threat_threshold == pytest.approx(0.75, abs=1e-3)
+    assert "0" in adapter_models.class_map or 0 in adapter_models.class_map
+
+
+def test_threatnet_input_formatting():
+    """Verifies that _format_threatnet_input generates buffers strictly conforming to (1, 2, 512)."""
+    from backend.adapters.ml_adapter import _format_threatnet_input
+
+    residuals = np.array([0.01, 0.02, 0.035, 0.04], dtype=np.float32)
+    intensities = np.array([0.2, 0.5, 0.95, 0.8], dtype=np.float32)
+
+    buffers, slot_mappings = _format_threatnet_input(residuals, intensities)
+    assert len(buffers) == 1
+    assert buffers[0].shape == (1, 2, 512)
+    assert buffers[0].dtype == np.float32
+    assert len(slot_mappings[0]) == 4
+    for buf_pos, slot_size in slot_mappings[0]:
+        assert slot_size == 5
+        assert 0 <= buf_pos <= 512 - slot_size
+
+    # Check empty input handling
+    empty_bufs, empty_maps = _format_threatnet_input(np.empty(0), np.empty(0))
+    assert len(empty_bufs) == 0
+    assert len(empty_maps) == 0
+
+
+def test_segmentation_model_instantiation():
+    """Verifies that segmentation model loader instantiates SalsaNext architecture rather than raw dict."""
+    adapter = MLPerceptionAdapter()
+    # Ensure segmentation_model is either None or an instantiated nn.Module, never a raw dict
+    assert not isinstance(adapter.segmentation_model, dict), "segmentation_model must not be a raw dict"
+
+
+def test_pointpillars_config_parsing():
+    """Verifies PointPillarsConfig values extracted from cbgs_pp_multihead.yaml."""
+    from backend.config import POINT_PILLARS, PointPillarsConfig
+
+    assert isinstance(POINT_PILLARS, PointPillarsConfig)
+    # Spatial bounds: [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
+    assert POINT_PILLARS.POINT_CLOUD_RANGE == (-51.2, -51.2, -5.0, 51.2, 51.2, 3.0)
+    assert POINT_PILLARS.x_min == -51.2
+    assert POINT_PILLARS.x_max == 51.2
+    assert POINT_PILLARS.y_min == -51.2
+    assert POINT_PILLARS.y_max == 51.2
+    assert POINT_PILLARS.z_min == -5.0
+    assert POINT_PILLARS.z_max == 3.0
+
+    # Voxel size: [0.2, 0.2, 8.0]
+    assert POINT_PILLARS.VOXEL_SIZE == (0.2, 0.2, 8.0)
+
+    # 10 Class names
+    expected_classes = (
+        "car",
+        "truck",
+        "construction_vehicle",
+        "bus",
+        "trailer",
+        "barrier",
+        "motorcycle",
+        "bicycle",
+        "pedestrian",
+        "traffic_cone",
+    )
+    assert POINT_PILLARS.CLASS_NAMES == expected_classes
+    assert len(POINT_PILLARS.CLASS_NAMES) == 10
+
+    # BEV Grid size: 512 x 512 x 1
+    assert POINT_PILLARS.grid_size == (512, 512, 1)
+    assert POINT_PILLARS.CODE_SIZE == 9
+
+
+def test_process_pillar_detections_with_pointpillars_config():
+    """Verifies MLPerceptionAdapter wiring and (M, 9) bounding box spatial filtering with PointPillarsConfig."""
+    adapter = MLPerceptionAdapter()
+
+    assert adapter.pointpillars_config is not None
+    assert adapter.point_cloud_range == (-51.2, -51.2, -5.0, 51.2, 51.2, 3.0)
+    assert adapter.voxel_size == (0.2, 0.2, 8.0)
+    assert len(adapter.pointpillars_classes) == 10
+    assert adapter.box_code_size == 9
+
+    # Create detections: 2 inside range, 2 outside range
+    dets = np.array([
+        # In-bounds: x=10, y=15, z=-1.0
+        [10.0, 15.0, -1.0, 4.5, 2.0, 1.6, 0.5, 2.0, 0.1],
+        # In-bounds: x=-20, y=-30, z=0.5
+        [-20.0, -30.0, 0.5, 6.0, 2.5, 2.8, -0.3, 0.0, 0.0],
+        # Out-of-bounds: x=60.0 > 51.2
+        [60.0, 0.0, 0.0, 4.0, 2.0, 1.5, 0.0, 1.0, 0.0],
+        # Out-of-bounds: z=-6.0 < -5.0
+        [0.0, 0.0, -6.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+    ], dtype=np.float32)
+
+    # With filter_out_of_bounds=True (default), out-of-bounds boxes are filtered out
+    filtered_clusters = adapter.process_pillar_detections(dets, filter_out_of_bounds=True)
+    assert len(filtered_clusters) == 2
+    assert filtered_clusters[0].centroid == (10.0, 15.0, -1.0)
+    assert filtered_clusters[1].centroid == (-20.0, -30.0, 0.5)
+
+    # With filter_out_of_bounds=False, all 4 are kept
+    all_clusters = adapter.process_pillar_detections(dets, filter_out_of_bounds=False)
+    assert len(all_clusters) == 4
+
+

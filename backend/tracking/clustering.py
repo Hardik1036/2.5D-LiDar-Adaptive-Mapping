@@ -73,7 +73,7 @@ class EuclideanClusterer:
 
         # Fast spatial voxel decimation if point cloud is dense (> 400 pts)
         if n_pts > 400:
-            grid_res = 0.35  # 35cm spatial decimation
+            grid_res = 0.48  # 48cm spatial decimation
             quant = np.round(xyz / grid_res).astype(np.int32)
             _, uidx = np.unique(quant, axis=0, return_index=True)
             pts_to_cluster = xyz[uidx]

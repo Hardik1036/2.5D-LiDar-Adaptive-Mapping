@@ -94,6 +94,7 @@ class TrackingConfig:
     
     # Dynamic obstacle velocity threshold to qualify for dynamic hazard prediction
     DYNAMIC_SPEED_THRESHOLD: float = 0.25  # m/s
+    MAX_TRACKS: int = 40                # Maximum tracked objects to prevent explosion
 
 
 @dataclass(frozen=True)
@@ -161,6 +162,106 @@ class DatabaseConfig:
     KEY_TELEMETRY: str = "telemetry:stream"
 
 
+@dataclass(frozen=True)
+class PointPillarsConfig:
+    """
+    PointPillars (Model 2) 3D Object Detection configuration.
+    Extracted from backend/models/configs/cbgs_pp_multihead.yaml.
+    """
+    POINT_CLOUD_RANGE: Tuple[float, float, float, float, float, float] = (
+        -51.2, -51.2, -5.0, 51.2, 51.2, 3.0
+    )
+    VOXEL_SIZE: Tuple[float, float, float] = (0.2, 0.2, 8.0)
+    CLASS_NAMES: Tuple[str, ...] = (
+        "car",
+        "truck",
+        "construction_vehicle",
+        "bus",
+        "trailer",
+        "barrier",
+        "motorcycle",
+        "bicycle",
+        "pedestrian",
+        "traffic_cone",
+    )
+    CODE_SIZE: int = 9
+    MAX_POINTS_PER_VOXEL: int = 20
+    MAX_NUMBER_OF_VOXELS: int = 30000
+
+    @property
+    def x_min(self) -> float:
+        return self.POINT_CLOUD_RANGE[0]
+
+    @property
+    def y_min(self) -> float:
+        return self.POINT_CLOUD_RANGE[1]
+
+    @property
+    def z_min(self) -> float:
+        return self.POINT_CLOUD_RANGE[2]
+
+    @property
+    def x_max(self) -> float:
+        return self.POINT_CLOUD_RANGE[3]
+
+    @property
+    def y_max(self) -> float:
+        return self.POINT_CLOUD_RANGE[4]
+
+    @property
+    def z_max(self) -> float:
+        return self.POINT_CLOUD_RANGE[5]
+
+    @property
+    def grid_size(self) -> Tuple[int, int, int]:
+        """Calculates BEV grid dimensions (W, H, D) based on point cloud range and voxel size."""
+        dx = int(round((self.x_max - self.x_min) / self.VOXEL_SIZE[0]))
+        dy = int(round((self.y_max - self.y_min) / self.VOXEL_SIZE[1]))
+        dz = int(round((self.z_max - self.z_min) / self.VOXEL_SIZE[2]))
+        return (dx, dy, dz)
+
+    @classmethod
+    def from_yaml(cls, yaml_path: Optional[str] = None) -> "PointPillarsConfig":
+        """
+        Loads configuration dynamically from cbgs_pp_multihead.yaml if available,
+        falling back to default constants.
+        """
+        if yaml_path is None:
+            from pathlib import Path
+            root = Path(__file__).resolve().parent
+            candidates = [
+                root / "models" / "configs" / "cbgs_pp_multihead.yaml",
+                Path("backend/models/configs/cbgs_pp_multihead.yaml"),
+                Path("models/configs/cbgs_pp_multihead.yaml"),
+            ]
+            for c in candidates:
+                if c.exists():
+                    yaml_path = str(c)
+                    break
+
+        if yaml_path:
+            try:
+                import yaml
+                with open(yaml_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f)
+                class_names = tuple(data.get("CLASS_NAMES", cls.CLASS_NAMES))
+                data_cfg = data.get("DATA_CONFIG", {})
+                pc_range = tuple(float(x) for x in data_cfg.get("POINT_CLOUD_RANGE", cls.POINT_CLOUD_RANGE))
+                voxel_size = cls.VOXEL_SIZE
+                for proc in data_cfg.get("DATA_PROCESSOR", []):
+                    if "VOXEL_SIZE" in proc:
+                        voxel_size = tuple(float(v) for v in proc["VOXEL_SIZE"])
+                        break
+                return cls(
+                    POINT_CLOUD_RANGE=pc_range,
+                    VOXEL_SIZE=voxel_size,
+                    CLASS_NAMES=class_names,
+                )
+            except Exception:
+                pass
+        return cls()
+
+
 # Global instances
 BOUNDS = SpatialBounds()
 QUADTREE = QuadtreeConfig()
@@ -172,4 +273,6 @@ CONFIG = PipelineConfig()
 SERVER = CONFIG
 NAV2 = Nav2Config()
 DATABASE = DatabaseConfig()
+POINT_PILLARS = PointPillarsConfig.from_yaml()
+
 

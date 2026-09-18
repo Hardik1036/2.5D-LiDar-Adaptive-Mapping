@@ -79,16 +79,35 @@ class TemporalMapBlender:
         if not leaves:
             return
 
+        inv_res = self.inv_res
+        r_meas = self.r_meas
+        q_proc = self.q_proc
+        memory = self._cell_memory
+
         for leaf in leaves:
             stats = leaf.stats
             if stats is None:
                 continue
 
+            key = (int(round(leaf.x * inv_res)), int(round(leaf.y * inv_res)))
+            cell = memory.get(key)
             z_meas = stats.mean_z
-            z_smoothed = self.update_cell(leaf.x, leaf.y, z_meas)
 
-            # Update cell stats mean_z in-place with smoothed estimate
-            stats.mean_z = z_smoothed
+            if cell is None:
+                memory[key] = [z_meas, r_meas * 2.0, 1.0]
+            else:
+                z_prev, p_prev, count = cell
+                k_gain = p_prev / (p_prev + r_meas)
+                z_new = z_prev + k_gain * (z_meas - z_prev)
+                cell[0] = z_new
+                cell[1] = (1.0 - k_gain) * p_prev + q_proc
+                cell[2] = count + 1.0
+                stats.mean_z = z_new
+
+        if len(memory) > self.max_cells:
+            excess = len(memory) - self.max_cells + 500
+            for k in [k for _, k in zip(range(excess), memory)]:
+                del memory[k]
 
     def clear(self):
         """Clears persistent terrain memory."""

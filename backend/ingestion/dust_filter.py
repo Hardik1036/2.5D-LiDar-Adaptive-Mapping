@@ -92,10 +92,10 @@ class StatisticalDustFilter:
                 tree_pts = air_pts[::stride, :3]
                 tree = cKDTree(tree_pts, leafsize=32)
                 query_k = min(eval_k + 1, len(tree_pts))
-                dists, _ = tree.query(air_pts[:, :3], k=query_k, workers=-1)
+                dists, _ = tree.query(air_pts[:, :3], k=query_k, workers=1)
             else:
                 tree = cKDTree(air_pts[:, :3], leafsize=32)
-                dists, _ = tree.query(air_pts[:, :3], k=eval_k + 1, workers=-1)
+                dists, _ = tree.query(air_pts[:, :3], k=eval_k + 1, workers=1)
 
             mean_dists = np.mean(dists[:, 1:], axis=1)
 
