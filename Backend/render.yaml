@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: drishti-backend
+    env: python
+    region: singapore
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python -m backend.main --kaggle --kaggle-dataset hardiknopany1036/drishti-2-5d-dataset"
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: KAGGLE_USERNAME
+        sync: false
+      - key: KAGGLE_KEY
+        sync: false

@@ -1,0 +1,38 @@
+﻿# Data and Binaries (Do NOT push huge raw point cloud files)
+data/
+Backend/data/
+*.bin
+*.pkl
+*.npy
+*.npz
+
+# Python Caches & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Node & Frontend Build Artifacts
+node_modules/
+Frontend/node_modules/
+Frontend/dist/
+dist/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment Secrets
+.env
+.env.*
+!.env.example
+
+# OS / IDE Artifacts
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
