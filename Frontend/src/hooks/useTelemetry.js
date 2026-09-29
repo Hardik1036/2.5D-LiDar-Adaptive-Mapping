@@ -15,7 +15,17 @@ import {
 } from "../utils/session.js";
 export { summarizeFrame };
 
-const DEFAULT_WS_URL = "ws://127.0.0.1:8765";
+const DEFAULT_WS_URL =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_WS_URL) ||
+  (typeof window !== "undefined" && (window.__WS_URL__ || window.VITE_WS_URL)) ||
+  (typeof process !== "undefined" && process.env?.VITE_WS_URL) ||
+  (typeof window !== "undefined" &&
+  window.location &&
+  window.location.hostname &&
+  window.location.hostname !== "localhost" &&
+  window.location.hostname !== "127.0.0.1"
+    ? "wss://drishti-2-5d-lidar-adaptive-mapping-1.onrender.com"
+    : "ws://127.0.0.1:8765");
 
 export function useTelemetry(customUrl) {
   const rawUrl = customUrl || (typeof window !== "undefined" && window.__WS_URL__) || DEFAULT_WS_URL;

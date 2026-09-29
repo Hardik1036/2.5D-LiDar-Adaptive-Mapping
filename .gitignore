@@ -29,6 +29,7 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+!Frontend/.env*
 
 # OS / IDE Artifacts
 .vscode/
@@ -36,3 +37,4 @@ yarn-error.log*
 *.swp
 Thumbs.db
 Desktop.ini
+

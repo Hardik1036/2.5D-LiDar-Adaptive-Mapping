@@ -6,10 +6,17 @@
  * LIVE requires a valid frame, not just an open socket. Silent/stale sockets fall back.
  */
 const WS_URL =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_WS_URL) ||
   (typeof window !== "undefined" &&
     (window.__WS_URL__ || window.VITE_WS_URL)) ||
   (typeof process !== "undefined" && process.env?.VITE_WS_URL) ||
-  "ws://127.0.0.1:8765";
+  (typeof window !== "undefined" &&
+  window.location &&
+  window.location.hostname &&
+  window.location.hostname !== "localhost" &&
+  window.location.hostname !== "127.0.0.1"
+    ? "wss://drishti-2-5d-lidar-adaptive-mapping-1.onrender.com"
+    : "ws://127.0.0.1:8765");
 const GRACE_MS = 3000;
 const FRAME_MS = 40;
 const finite = (n) => typeof n === "number" && Number.isFinite(n);
@@ -456,9 +463,16 @@ export function connectWebSocket() {
   isExplicitlyClosed = false;
 
   const targetUrl = (
+    (typeof import.meta !== "undefined" && import.meta.env?.VITE_WS_URL) ||
     (typeof window !== "undefined" && (window.__WS_URL__ || window.VITE_WS_URL)) ||
     (typeof process !== "undefined" && process.env?.VITE_WS_URL) ||
-    "ws://127.0.0.1:8765"
+    (typeof window !== "undefined" &&
+    window.location &&
+    window.location.hostname &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+      ? "wss://drishti-2-5d-lidar-adaptive-mapping-1.onrender.com"
+      : "ws://127.0.0.1:8765")
   ).replace("localhost", "127.0.0.1");
 
   try {

@@ -7,7 +7,8 @@ const source = fs
     new URL("../src/services/telemetryService.js", import.meta.url),
     "utf8",
   )
-  .replaceAll("export function", "function");
+  .replaceAll("export function", "function")
+  .replaceAll("import.meta", "({ env: {} })");
 function harness() {
   let now = 0,
     next = 0;
