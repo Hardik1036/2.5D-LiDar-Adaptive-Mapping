@@ -16,91 +16,6 @@ import websockets.exceptions
 # Suppress websockets internal logging of rejected HTTP probe connections
 logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
 
-# Lenient HTTP request parsing to support HEAD, GET, and OPTIONS for cloud health check probes (Render, Railway, etc.)
-try:
-    from websockets import http11
-    from websockets.http11 import parse_line, parse_headers, d
-
-    @classmethod
-    def _lenient_http11_parse(cls, read_line):
-        """Safely yields lines and absorbs early EOF/probe closures."""
-        try:
-            request_line = yield from parse_line(read_line)
-        except (EOFError, ConnectionResetError):
-            # Cleanly return None on zero-byte closures or dropped probe connections
-            return None
-        except Exception as exc:
-            logger.debug(f"[WebSocketServer] Suppressed parse line anomaly: {exc}")
-            return None
-
-        if not request_line:
-            return None
-
-        try:
-            method, raw_path, protocol = request_line.split(b" ", 2)
-        except ValueError:
-            return None
-        if protocol != b"HTTP/1.1":
-            raise ValueError(f"unsupported protocol; expected HTTP/1.1: {d(request_line)}")
-        if method not in (b"GET", b"HEAD", b"OPTIONS"):
-            raise ValueError(f"unsupported HTTP method; expected GET or HEAD; got {d(method)}")
-        path = raw_path.decode("ascii", "surrogateescape")
-        try:
-            headers = yield from parse_headers(read_line)
-        except (EOFError, ConnectionResetError):
-            return None
-        except Exception as exc:
-            logger.debug(f"[WebSocketServer] Suppressed parse headers anomaly: {exc}")
-            return None
-
-        if "Transfer-Encoding" in headers:
-            raise NotImplementedError("transfer codings aren't supported")
-        if "Content-Length" in headers:
-            raise ValueError("unsupported request body")
-        req = cls(path, headers)
-        req.method = method.decode("ascii")
-        return req
-
-    http11.Request.parse = _lenient_http11_parse
-except Exception:
-    pass
-
-try:
-    from websockets.legacy import http as legacy_http
-    from websockets.legacy.http import read_line, read_headers, d
-
-    async def _lenient_legacy_read_request(stream):
-        """Safely reads request and absorbs early EOF/probe closures."""
-        try:
-            request_line = await read_line(stream)
-        except (EOFError, ConnectionResetError):
-            return None, {}
-        except Exception as exc:
-            logger.debug(f"[WebSocketServer] Suppressed legacy read request anomaly: {exc}")
-            return None, {}
-
-        if not request_line:
-            return None, {}
-
-        try:
-            method, raw_path, version = request_line.split(b" ", 2)
-        except ValueError:
-            return None, {}
-        if method not in (b"GET", b"HEAD", b"OPTIONS"):
-            raise ValueError(f"unsupported HTTP method: {d(method)}")
-        if version != b"HTTP/1.1":
-            raise ValueError(f"unsupported HTTP version: {d(version)}")
-        path = raw_path.decode("ascii", "surrogateescape")
-        try:
-            headers = await read_headers(stream)
-        except (EOFError, ConnectionResetError):
-            return None, {}
-        return path, headers
-
-    legacy_http.read_request = _lenient_legacy_read_request
-except Exception:
-    pass
-
 try:
     import orjson
     HAS_ORJSON = True
@@ -123,31 +38,43 @@ from backend.config import CONFIG, SERVER
 logger = logging.getLogger("WebSocketServer")
 
 
-async def health_check_handler(connection, request=None, *args, **kwargs):
+async def process_request(connection, request=None, *args, **kwargs):
     """
-    Directly answers Render's HTTP port/health probes with 200 OK
-    without attempting a full WebSocket handshake upgrade.
+    Handle plain HTTP health-check pings from Railway/Render reverse proxies
+    without crashing the WebSocket protocol state machine.
     Compatible with websockets >= 13 (connection, request) and < 13 (path, headers).
     """
     # websockets >= 13: connection, request
     if request is not None and hasattr(request, "headers"):
-        headers = dict(request.headers)
-        if headers.get("Upgrade", "").lower() != "websocket":
+        if request.headers.get("Upgrade", "").lower() != "websocket":
             if hasattr(connection, "respond"):
-                return connection.respond(http.HTTPStatus.OK, "OK\nDRISHTI-2.5D Perception Engine Online\n")
-            return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
+                return connection.respond(
+                    http.HTTPStatus.OK,
+                    "OK\nDRISHTI-2.5D Perception Engine Online\n",
+                )
+            return (
+                http.HTTPStatus.OK,
+                [("Content-Type", "text/plain"), ("Content-Length", "42")],
+                b"OK\nDRISHTI-2.5D Perception Engine Online\n",
+            )
         return None
 
     # websockets < 13: (path, headers) where connection is path and request is headers
     if isinstance(request, (dict, list)) or hasattr(request, "get"):
         headers = dict(request) if hasattr(request, "items") else request
         if hasattr(headers, "get") and headers.get("Upgrade", "").lower() != "websocket":
-            return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
+            return (
+                http.HTTPStatus.OK,
+                [("Content-Type", "text/plain"), ("Content-Length", "42")],
+                b"OK\nDRISHTI-2.5D Perception Engine Online\n",
+            )
         return None
 
     return None
 
-process_http_request = health_check_handler
+
+health_check_handler = process_request
+process_http_request = process_request
 
 
 class TelemetryWebSocketServer:
@@ -270,10 +197,10 @@ class TelemetryWebSocketServer:
             host=host,
             port=port,
             max_size=10 * 1024 * 1024,      # 10 MB max payload size for dense point/quadtree sweeps
-            ping_interval=getattr(self, "ping_interval", 10),               # Keep alive heartbeat every 10s
-            ping_timeout=getattr(self, "ping_timeout", 30),                 # Reconnect drop window
+            ping_interval=getattr(self, "ping_interval", 20),
+            ping_timeout=getattr(self, "ping_timeout", 20),
             origins=origins,
-            process_request=health_check_handler,
+            process_request=process_request,
         )
         self._is_running = True
         logger.info(f"[WebSocketServer] Listening on ws://{host}:{port} with HTTP probe handling (Max Buffer: 10MB)")
