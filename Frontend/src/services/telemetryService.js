@@ -15,7 +15,7 @@ const WS_URL =
   window.location.hostname &&
   window.location.hostname !== "localhost" &&
   window.location.hostname !== "127.0.0.1"
-    ? "wss://drishti-2-5d-lidar-adaptive-mapping-1.onrender.com"
+    ? "wss://drishti-25d-lidar-adaptive-mapping-production.up.railway.app"
     : "ws://127.0.0.1:8765");
 const GRACE_MS = 3000;
 const FRAME_MS = 40;
@@ -471,7 +471,7 @@ export function connectWebSocket() {
     window.location.hostname &&
     window.location.hostname !== "localhost" &&
     window.location.hostname !== "127.0.0.1"
-      ? "wss://drishti-2-5d-lidar-adaptive-mapping-1.onrender.com"
+      ? "wss://drishti-25d-lidar-adaptive-mapping-production.up.railway.app"
       : "ws://127.0.0.1:8765")
   ).replace("localhost", "127.0.0.1");
 
