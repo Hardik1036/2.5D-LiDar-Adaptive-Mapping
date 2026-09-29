@@ -257,6 +257,8 @@ class PerceptionPipeline:
         if not action:
             return
         action = str(action).lower().strip()
+        if action in ("ping", "pong"):
+            return
         if action == "pause":
             self.is_paused = True
             logger.info("Pipeline playback PAUSED via client command.")

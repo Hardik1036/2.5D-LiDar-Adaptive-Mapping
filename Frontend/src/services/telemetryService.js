@@ -350,6 +350,22 @@ let activeDisconnected = null;
 let activeStopFallback = null;
 let activeStartFallback = null;
 
+let heartbeatTimer = null;
+
+export function ensureHeartbeat() {
+  if (!heartbeatTimer) {
+    heartbeatTimer = setInterval(() => {
+      const socket = ws || activeWs;
+      const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+      if (socket && socket.readyState === OPEN) {
+        try {
+          socket.send(JSON.stringify({ type: "ping" }));
+        } catch {}
+      }
+    }, 10000); // 10-second heartbeat keeps Railway edge proxy connection active indefinitely
+  }
+}
+
 export function sendPlaybackCommand(payload) {
   const socket = ws || activeWs;
   const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
@@ -360,12 +376,39 @@ export function sendPlaybackCommand(payload) {
   }
 }
 
+let lastDatasetCommandTime = 0;
+let lastDatasetPendingTimer = null;
+
 export function sendCommand(payload) {
+  if (payload && (payload.action === "set_dataset" || payload.command === "set_dataset")) {
+    if (lastDatasetPendingTimer) {
+      clearTimeout(lastDatasetPendingTimer);
+      lastDatasetPendingTimer = null;
+    }
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    if (now - lastDatasetCommandTime < 300) {
+      lastDatasetPendingTimer = setTimeout(() => {
+        lastDatasetPendingTimer = null;
+        lastDatasetCommandTime = typeof performance !== "undefined" ? performance.now() : Date.now();
+        sendPlaybackCommand(payload);
+      }, 300 - (now - lastDatasetCommandTime));
+      return;
+    }
+    lastDatasetCommandTime = now;
+  }
   return sendPlaybackCommand(payload);
 }
 
 export function setLivePaused(paused) {
+  const wasPaused = isPaused;
   isPaused = Boolean(paused);
+  if (wasPaused && !isPaused) {
+    // When unpausing, clear backlog queue to avoid fast-forward frame bursts
+    pausedFrameQueue.length = 0;
+    if (cachedLatestFrame && activeOnFrame) {
+      activeOnFrame(cachedLatestFrame);
+    }
+  }
   // Send control command to backend if connected
   sendPlaybackCommand({ action: isPaused ? "pause" : "resume", command: isPaused ? "pause" : "resume" });
 }
@@ -431,8 +474,8 @@ export function dispatchTelemetryFrame(data) {
   const norm = normalizeTelemetryFrame(data);
   cachedLatestFrame = norm;
   if (isPaused) {
+    pausedFrameQueue.length = 0;
     pausedFrameQueue.push(norm);
-    if (pausedFrameQueue.length > 50) pausedFrameQueue.shift();
     return;
   }
   if (playbackSpeed < 0.99) {
@@ -447,6 +490,10 @@ export function dispatchTelemetryFrame(data) {
 }
 
 export function connectWebSocket() {
+  // Ensure background heartbeat ping is running permanently
+  ensureHeartbeat();
+  pausedFrameQueue.length = 0;
+
   // 1. Singleton Guard: Never create a new socket if one is already open or connecting
   const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
   const CONNECTING = typeof WebSocket !== "undefined" ? WebSocket.CONNECTING : 0;
@@ -493,6 +540,13 @@ export function connectWebSocket() {
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
+      if (data && (data.type === "pong" || data.pong)) {
+        // Keep-alive acknowledgment from server
+        if (isPaused) {
+          lastFrameAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+        }
+        return;
+      }
       dispatchTelemetryFrame(data);
     } catch (e) {
       console.error("[Telemetry] Frame parse error:", e);
@@ -595,7 +649,7 @@ export function connectTelemetry(onFrame, onStatusChange) {
     if (stopped) return;
     setStatus("offline");
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
-    if (manualDisconnect || now - startedAt >= GRACE_MS) {
+    if (manualDisconnect || (!isPaused && now - startedAt >= GRACE_MS)) {
       if (fallback !== null) setStatus("simulated");
       else startFallback();
     }

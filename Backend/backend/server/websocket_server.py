@@ -136,6 +136,15 @@ class TelemetryWebSocketServer:
                     else:
                         data = {"command": str(raw_message)}
 
+                    msg_type = data.get("type") or data.get("action") or data.get("command")
+                    if msg_type == "ping" or (isinstance(raw_message, str) and raw_message.strip().lower() == "ping"):
+                        # Immediately reply with pong to keep Railway/reverse-proxy TCP connection alive during pause
+                        try:
+                            await websocket.send('{"type":"pong"}')
+                        except Exception:
+                            pass
+                        continue
+
                     action = data.get("action") or data.get("command") or data.get("mode")
 
                     # Acknowledge step / next / playback commands cleanly
@@ -147,6 +156,7 @@ class TelemetryWebSocketServer:
                         target_mode = data.get("dataset") or data.get("mode")
                         if target_mode in ("static", "dynamic"):
                             self.set_dataset_mode(target_mode)
+                        continue
 
                     if self.command_callback is not None:
                         try:

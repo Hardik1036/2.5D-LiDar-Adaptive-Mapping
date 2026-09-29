@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { DrishtiSymbol, Icon } from "./Brand.jsx";
 import {
   MODES,
@@ -38,12 +38,18 @@ export default function SceneControls({
   const change = (key, value) => setOptions((p) => ({ ...p, [key]: value }));
 
   const [activeDataset, setActiveDataset] = useState("static"); // "static" | "dynamic"
+  const datasetDebounceTimer = useRef(null);
 
   const handleSelectDataset = (mode) => {
     setActiveDataset(mode);
-    if (typeof sendCommand === "function") {
-      sendCommand({ action: "set_dataset", mode });
+    if (datasetDebounceTimer.current) {
+      clearTimeout(datasetDebounceTimer.current);
     }
+    datasetDebounceTimer.current = setTimeout(() => {
+      if (typeof sendCommand === "function") {
+        sendCommand({ action: "set_dataset", mode });
+      }
+    }, 300);
   };
 
   const isPaused = propIsPaused !== undefined ? propIsPaused : isLivePaused();
