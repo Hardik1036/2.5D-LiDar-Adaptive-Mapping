@@ -239,3 +239,26 @@ def test_real_world_lidar_sweep_ingestion():
     assert res["stats"]["obstacle_points"] > 0
     assert res["stats"]["cell_count"] == len(res["leaves"])
 
+
+def test_render_health_check_http_response():
+    """Verify HTTP GET health-check returns 200 OK on WebSocket port."""
+    import urllib.request
+    from backend.server.websocket_server import TelemetryWebSocketServer
+
+    async def _run():
+        server = TelemetryWebSocketServer(host="127.0.0.1", port=9199)
+        await server.start()
+        try:
+            def _fetch():
+                req = urllib.request.Request("http://127.0.0.1:9199/healthz")
+                with urllib.request.urlopen(req) as resp:
+                    return resp.status, resp.read().decode("utf-8")
+
+            status, body = await asyncio.to_thread(_fetch)
+            assert status == 200
+            assert "DRISHTI-2.5D Perception Engine Online" in body
+        finally:
+            await server.stop()
+
+    asyncio.run(_run())
+

@@ -164,7 +164,7 @@ class PerceptionPipeline:
         profile_mode: bool = False,
         dataset_dir: Optional[Union[str, Path]] = None,
         kaggle: bool = False,
-        kaggle_dataset: Optional[str] = "hardiknopany/drishti-2-5d-dataset",
+        kaggle_dataset: Optional[str] = None,
         kaggle_streamer: Optional[Any] = None,
         **kwargs,
     ):
@@ -174,14 +174,12 @@ class PerceptionPipeline:
         self.is_running = False
         self.ros_output = ros_output
         self.profile_mode = profile_mode
-        self.kaggle = kaggle or (kaggle_streamer is not None)
-        self.kaggle_dataset = (
-            kaggle_dataset or os.environ.get("KAGGLE_DATASET") or "hardiknopany/drishti-2-5d-dataset"
-        )
-        self.kaggle_streamer = kaggle_streamer
+        self.kaggle = False
+        self.kaggle_dataset = None
+        self.kaggle_streamer = None
         ds_path = Path(dataset_dir) if dataset_dir is not None else DEFAULT_DATASET_DIR
         # Ensure path points strictly to the full sweeps in training/velodyne, never parent or gt_database
-        if not self.kaggle and ds_path.is_dir():
+        if ds_path.is_dir():
             velo_sub = ds_path / "training" / "velodyne"
             if velo_sub.exists():
                 ds_path = velo_sub
@@ -747,37 +745,25 @@ class PerceptionPipeline:
         self.is_running = True
         logger.info("Perception pipeline live server listening for incoming frames.")
 
-        kaggle_gen = None
         sweep_files: List[Path] = []
 
-        if self.kaggle:
-            logger.info(f"[KaggleStreamer] Kaggle remote streaming enabled: {self.kaggle_dataset}")
-            if self.kaggle_streamer is None:
-                from backend.ingestion.kaggle_streamer import KaggleDatasetStreamer
-                self.kaggle_streamer = KaggleDatasetStreamer(
-                    dataset_slug=self.kaggle_dataset,
-                    loop=True,
-                )
-            kaggle_gen = self.kaggle_streamer.stream(fps=self.target_fps)
-            logger.info(f"[KaggleStreamer] Initialized with {len(self.kaggle_streamer.sweep_files)} sweeps ready for streaming.")
-        else:
-            # Load dynamic sequence sweeps from dataset_dir
-            if self.dataset_dir and self.dataset_dir.exists() and self.dataset_dir.is_dir():
-                sweep_files = sorted(list(self.dataset_dir.glob("*.bin")))
-                if sweep_files:
-                    logger.info(f"Loaded dynamic sequence dataset from {self.dataset_dir}: {len(sweep_files)} sweeps")
+        # Load dynamic sequence sweeps from dataset_dir
+        if self.dataset_dir and self.dataset_dir.exists() and self.dataset_dir.is_dir():
+            sweep_files = sorted(list(self.dataset_dir.glob("*.bin")))
+            if sweep_files:
+                logger.info(f"Loaded dynamic sequence dataset from {self.dataset_dir}: {len(sweep_files)} sweeps")
 
-            # Fallback to single static sweep if sequence directory is empty
-            if not sweep_files:
-                for candidate in [
-                    Path("data/test_sweep/000000.bin"),
-                    Path(__file__).resolve().parent.parent / "data" / "test_sweep" / "000000.bin",
-                    Path(__file__).resolve().parent.parent / "data" / "kitti_clean" / "training" / "velodyne" / "000000.bin",
-                ]:
-                    if candidate.exists():
-                        sweep_files = [candidate]
-                        logger.info(f"Using single-frame LiDAR sweep fallback: {candidate}")
-                        break
+        # Fallback to single static sweep if sequence directory is empty
+        if not sweep_files:
+            for candidate in [
+                Path("data/test_sweep/000000.bin"),
+                Path(__file__).resolve().parent.parent / "data" / "test_sweep" / "000000.bin",
+                Path(__file__).resolve().parent.parent / "data" / "kitti_clean" / "training" / "velodyne" / "000000.bin",
+            ]:
+                if candidate.exists():
+                    sweep_files = [candidate]
+                    logger.info(f"Using single-frame LiDAR sweep fallback: {candidate}")
+                    break
 
         sweep_idx = 0
         start_loop_time = time.perf_counter()
@@ -815,18 +801,6 @@ class PerceptionPipeline:
                         await asyncio.sleep(0.01)  # Explicitly yield control to socket event loop
                     except asyncio.TimeoutError:
                         continue
-                elif self.kaggle and kaggle_gen is not None:
-                    try:
-                        pts, meta = await asyncio.to_thread(next, kaggle_gen)
-                    except StopIteration:
-                        logger.info("Kaggle stream reached end of sequence.")
-                        break
-                    ts = meta.get("timestamp", time.time()) if meta else time.time()
-                    # Offload heavy perception compute to thread pool
-                    frame_result = await asyncio.to_thread(self.process_frame, pts, timestamp=ts, meta=meta)
-                    if frame_result and "payload" in frame_result:
-                        await self.server.broadcast(frame_result["payload"])
-                    await asyncio.sleep(0.01)  # Explicitly yield control to socket event loop
                 else:
                     active_files = (
                         self.dataset_loader.files
@@ -943,13 +917,13 @@ def parse_args():
     parser.add_argument(
         "--kaggle",
         action="store_true",
-        help="Stream sweeps remotely from Kaggle dataset API",
+        help="[Deprecated] Previously streamed sweeps remotely from Kaggle dataset API",
     )
     parser.add_argument(
         "--kaggle-dataset",
         type=str,
-        default=os.environ.get("KAGGLE_DATASET", "hardiknopany/drishti-2-5d-dataset"),
-        help="Kaggle dataset slug (<owner>/<dataset-name>)",
+        default=None,
+        help="[Deprecated] Kaggle dataset slug (<owner>/<dataset-name>)",
     )
     return parser.parse_args()
 
@@ -974,8 +948,6 @@ def main():
         ros_output=args.ros_output,
         profile_mode=args.profile,
         dataset_dir=data_loader.data_dir if data_loader.data_dir else args.dataset_dir,
-        kaggle=args.kaggle,
-        kaggle_dataset=args.kaggle_dataset,
     )
 
     loop = asyncio.new_event_loop()

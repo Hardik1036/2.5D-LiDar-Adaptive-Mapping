@@ -6,6 +6,4 @@ scikit-learn>=1.2.0
 orjson>=3.9.0
 psutil
 python-dotenv
-kaggle
-kagglehub
 open3d>=0.18.0; python_version < "3.13"
