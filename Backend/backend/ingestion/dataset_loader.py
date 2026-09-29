@@ -44,7 +44,7 @@ class DatasetLoader:
         elif isinstance(mode_or_dir, str) and mode_or_dir.lower() not in ("static", "dynamic") and (Path(mode_or_dir).exists() or "/" in mode_or_dir or "\\" in mode_or_dir):
             target = Path(mode_or_dir)
 
-        if target is None:
+        if target is None and (mode_or_dir is not None or mode is not None):
             active_mode = active_mode or "dynamic"
             if active_mode == "static":
                 target = base_data / "static_corridor" / "velodyne"
@@ -62,10 +62,11 @@ class DatasetLoader:
                         target = cand
                         break
 
-        self.set_directory(str(target))
-        self.data_dir = self.dataset_dir
-        self.bin_files = self.files
-        logger.info(f"[DatasetLoader] Mode: '{active_mode or 'custom'}' | Loaded {len(self.bin_files)} frames from {self.data_dir}")
+        if target is not None:
+            self.set_directory(str(target))
+            self.data_dir = self.dataset_dir
+            self.bin_files = self.files
+            logger.info(f"[DatasetLoader] Mode: '{active_mode or 'custom'}' | Loaded {len(self.bin_files)} frames from {self.data_dir}")
 
     def set_directory(self, new_dir: str) -> bool:
         """

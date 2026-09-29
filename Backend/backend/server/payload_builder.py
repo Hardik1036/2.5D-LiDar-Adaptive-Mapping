@@ -82,7 +82,11 @@ def get_realtime_ram_mb(leaves: Optional[List[QuadtreeNode]] = None) -> float:
     return compute_quadtree_ram_mb(leaves)
 
 
-def serialize_raw_points(points: Optional[Union[np.ndarray, list]] = None, max_points: int = 16000) -> list:
+def serialize_raw_points(
+    points: Optional[Union[np.ndarray, list]] = None,
+    max_points: int = 16000,
+    round_decimals: Optional[int] = None,
+) -> list:
     """Serializes raw sensor points for Mode 1 inspection without quadtree alterations."""
     if points is None or len(points) == 0:
         return []
@@ -92,6 +96,8 @@ def serialize_raw_points(points: Optional[Union[np.ndarray, list]] = None, max_p
         points = points.reshape(-1, 3)
     stride = max(1, len(points) // max_points)
     sampled = points[::stride, :3].astype(np.float32)
+    if round_decimals is not None:
+        sampled = np.round(sampled, round_decimals).astype(np.float32)
     return sampled.flatten().tolist()
 
 
@@ -104,8 +110,16 @@ class PayloadBuilder:
 
     serialize_raw_points = staticmethod(serialize_raw_points)
 
-    def __init__(self, max_cells: int = 4500, alpha_ema: float = 0.15):
-        self.max_cells = max_cells or getattr(SERVER, "MAX_PAYLOAD_CELLS", 4500)
+    def __init__(
+        self,
+        max_cells: int = 1500,
+        alpha_ema: float = 0.15,
+        max_raw_points: int = 16000,
+        round_decimals: Optional[int] = None,
+    ):
+        self.max_cells = max_cells or getattr(SERVER, "MAX_PAYLOAD_CELLS", 1500)
+        self.max_raw_points = max_raw_points
+        self.round_decimals = round_decimals
         self.alpha_ema = alpha_ema
         self.accuracy_ema: float = 94.8
 
@@ -210,7 +224,7 @@ class PayloadBuilder:
         }
         if leaf.stats is not None:
             cell_dict["delta_z"] = round(float(leaf.stats.delta_z), 2)
-            cell_dict["variance"] = round(float(leaf.stats.variance), 4)
+            cell_dict["variance"] = round(float(leaf.stats.variance), 2)
             cell_dict["slope"] = round(float(leaf.stats.slope), 1)
             cell_dict["pts"] = int(leaf.stats.point_count)
         return cell_dict
@@ -283,13 +297,13 @@ class PayloadBuilder:
             obj_dict = {
                 "id": track_id,
                 "class": track_class,
-                "x": round(track_x, 3),
-                "y": round(track_y, 3),
-                "z": round(track_z, 3),
-                "vx": round(track_vx, 3),
-                "vy": round(track_vy, 3),
-                "speed": round(track_speed, 3),
-                "heading": round(track_heading, 3),
+                "x": round(track_x, 2),
+                "y": round(track_y, 2),
+                "z": round(track_z, 2),
+                "vx": round(track_vx, 2),
+                "vy": round(track_vy, 2),
+                "speed": round(track_speed, 2),
+                "heading": round(track_heading, 2),
             }
 
             # Attach dimensions, bounding box and hazard cones for visualizer HUD
@@ -309,9 +323,9 @@ class PayloadBuilder:
                     "id": -(idx + 1),          # Negative IDs distinguish parked from dynamic tracks
                     "class": "parked_car",
                     "stationary": True,
-                    "x": round(float(pc.centroid[0]), 3),
-                    "y": round(float(pc.centroid[1]), 3),
-                    "z": round(float(pc.centroid[2]), 3),
+                    "x": round(float(pc.centroid[0]), 2),
+                    "y": round(float(pc.centroid[1]), 2),
+                    "z": round(float(pc.centroid[2]), 2),
                     "vx": 0.0,
                     "vy": 0.0,
                     "speed": 0.0,
@@ -337,13 +351,17 @@ class PayloadBuilder:
             stats["ram_mb"] = compute_quadtree_ram_mb(leaves)
 
         payload_dict = {
-            "timestamp": round(float(timestamp), 3),
+            "timestamp": round(float(timestamp), 2),
             "frame_id": int(frame_id),
             "system_status": stats.get("system_status", "ALL_SYSTEMS_NOMINAL"),
             "system_stats": stats,
             "cells": serialized_cells,
             "dynamic_objects": serialized_objects,
-            "raw_points": serialize_raw_points(raw_points) if raw_points is not None else [],
+            "raw_points": serialize_raw_points(
+                raw_points,
+                max_points=getattr(self, "max_raw_points", 16000),
+                round_decimals=getattr(self, "round_decimals", None),
+            ) if raw_points is not None else [],
         }
 
         if HAS_ORJSON:

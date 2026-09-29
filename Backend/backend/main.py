@@ -219,7 +219,7 @@ class PerceptionPipeline:
 
         # Server & Streaming
         self.server = TelemetryWebSocketServer(host=host, port=port)
-        self.payload_builder = PayloadBuilder()
+        self.payload_builder = PayloadBuilder(max_raw_points=5000, round_decimals=2)
         self.telemetry_db = AsyncTelemetryDB()
 
         # Dataset loader & dynamic sequence routing
@@ -441,6 +441,9 @@ class PerceptionPipeline:
             np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
         )
         clean_points = raw_points[valid_mask]
+        # Fast vectorized downsample for dense sweeps (> 30,000 points) to cap cycle under 120ms
+        if len(clean_points) > 30000:
+            clean_points = clean_points[::2]
         t_ingest = (time.perf_counter() - t_ingest_start) * 1000.0
 
         # 2. Statistical Dust Outlier Filtering [F1.3]
@@ -498,7 +501,7 @@ class PerceptionPipeline:
 
         # 7. Obstacle clustering & Porosity Classification [F1.5]
         t_track_start = time.perf_counter()
-        if len(obstacle_pts) > 10000:
+        if len(obstacle_pts) > 3000:
             clustering_pts = obstacle_pts[::3]
         else:
             clustering_pts = obstacle_pts
@@ -661,7 +664,7 @@ class PerceptionPipeline:
             tracks=active_tracks,
             hazard_cones=hazard_cones,
             parked_car_clusters=parked_car_clusters,
-            raw_points=raw_points,
+            raw_points=clean_points,
         )
         if not self.is_running:
             self.server.broadcast_nowait(payload)

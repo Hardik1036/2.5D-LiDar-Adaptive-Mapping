@@ -104,8 +104,19 @@ except Exception:
 try:
     import orjson
     HAS_ORJSON = True
+    def fast_serialize(payload: Any) -> str:
+        # orjson dumps directly to bytes 10x faster than standard json
+        if hasattr(payload, "_dict") and isinstance(payload, str):
+            return str(payload)
+        return orjson.dumps(payload).decode("utf-8")
 except ImportError:
     HAS_ORJSON = False
+    import json
+    def fast_serialize(payload: Any) -> str:
+        if hasattr(payload, "_dict") and isinstance(payload, str):
+            return str(payload)
+        return json.dumps(payload)
+
 
 from backend.config import CONFIG, SERVER
 
@@ -276,11 +287,7 @@ class TelemetryWebSocketServer:
             return
 
         if isinstance(message, dict):
-            if HAS_ORJSON:
-                message = orjson.dumps(message).decode("utf-8")
-            else:
-                import json
-                message = json.dumps(message)
+            message = fast_serialize(message)
         elif isinstance(message, bytes):
             message = message.decode("utf-8")
         elif not isinstance(message, str):
@@ -308,11 +315,7 @@ class TelemetryWebSocketServer:
         """
         if self.connected_clients and self._is_running:
             if isinstance(message, dict):
-                if HAS_ORJSON:
-                    message = orjson.dumps(message).decode("utf-8")
-                else:
-                    import json
-                    message = json.dumps(message)
+                message = fast_serialize(message)
             elif isinstance(message, bytes):
                 message = message.decode("utf-8")
 
