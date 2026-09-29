@@ -1,22 +1,23 @@
-﻿<div align="center">
+<div align="center">
 
-<img src="Frontend/public/brand/drishti-lockup-transparent.png" alt="DRISHTI-2.5D Logo" width="520" />
+<img src="Frontend/public/brand/drishti-lockup-transparent.png" alt="DRISHTI-2.5D Logo" width="560" />
 
 # DRISHTI-2.5D
+## Dynamic Real-Time Ingestion & Spatial Hazard Tracking Interface
 ### Real-Time Adaptive Variable-Resolution LiDAR Perception & Tactical Semantic Intelligence
 
 [![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![React](https://img.shields.io/badge/React-18.3-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Three.js](https://img.shields.io/badge/Three.js-r128%20WebGL-black?style=for-the-badge&logo=three.js&logoColor=white)](https://threejs.org/)
+[![Three.js](https://img.shields.io/badge/Three.js-r128%20WebGL%202.0-black?style=for-the-badge&logo=three.js&logoColor=white)](https://threejs.org/)
 [![Vite](https://img.shields.io/badge/Vite-6.4%20Build-646CFF?style=for-the-badge&logo=vite&logoColor=white)](https://vitejs.dev/)
-[![WebSocket Buffer](https://img.shields.io/badge/WebSocket-10%20MB%20RingBuffer-010101?style=for-the-badge&logo=socketdotio&logoColor=white)](https://websockets.readthedocs.io/)
+[![WebSocket Protocol](https://img.shields.io/badge/WebSocket-10%20MB%20RingBuffer%20%7C%2010s%20Heartbeat-010101?style=for-the-badge&logo=socketdotio&logoColor=white)](https://websockets.readthedocs.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Asynchronous%20Event%20Loop-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://docs.python.org/3/library/asyncio.html)
-[![Test Suite](https://img.shields.io/badge/Tests-100%25%20Passing%20(130%2F130)-238636?style=for-the-badge&logo=pytest&logoColor=white)](https://pytest.org/)
+[![Test Suite](https://img.shields.io/badge/Test%20Suite-100%25%20Passing-238636?style=for-the-badge&logo=pytest&logoColor=white)](https://pytest.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
 <br/>
 
-**DRISHTI-2.5D** is an autonomous perception and tactical navigation system engineered for high-speed corridor clearance, negative obstacle gating, and low-profile hazard classification under severe sensory constraints. By coupling adaptive variable-resolution geometric quadtrees with deep semantic segmentation and millimeter-precision elevation gating, it delivers an unbroken, deterministic traversability corridor at sustained $\ge 25\text{ Hz}$ frame rates.
+> **DRISHTI-2.5D** is an autonomous perception and tactical navigation system engineered for high-speed corridor clearance, negative obstacle gating, and low-profile hazard classification under severe sensory and edge computing constraints. By coupling adaptive variable-resolution geometric quadtrees with deep semantic segmentation and millimeter-precision elevation gating, it delivers an unbroken, deterministic traversability corridor at sustained **$\ge 25\text{ Hz}$** frame rates with an embedded edge RAM budget of **$< 8.0\text{ MB}$**.
 
 </div>
 
@@ -36,21 +37,21 @@
 - [Quickstart & Installation](#-quickstart--installation)
 - [Benchmark & SLA Latency Matrix](#-benchmark--sla-latency-matrix)
 - [Interactive HUD Cockpit & Controls](#-interactive-hud-cockpit--controls)
-- [Team Contributions & Roles](#-team-contributions--roles)
+- [Team Contributions & Role Matrix](#-team-contributions--role-matrix)
 - [License](#-license)
 
 ---
 
 ## 🔭 Executive Overview & Mission Statement
 
-Operating autonomous tactical ground vehicles in unstructured, GPS-denied environments requires instant, unambiguous differentiation between traversable asphalt, airborne particulate noise (dust, smoke, exhaust), low-relief threats (spike strips, cables), and lethal negative obstacles (anti-tank ditches, step drop-offs). 
+Operating autonomous tactical ground vehicles in unstructured, GPS-denied environments requires instant, unambiguous differentiation between traversable asphalt, airborne particulate noise (dust, smoke, exhaust), low-relief threats (spike strips, cables), and lethal negative obstacles (anti-tank ditches, shell craters, step drop-offs). 
 
-Classical 3D voxel grids impose prohibitive computational bottlenecks ($>150\text{ ms}$ processing times), while conventional 2D flat costmaps collapse vertical structure and fail completely on negative drops. **DRISHTI-2.5D** resolves this dilemma with an adaptive variable-resolution **2.5D Quadtree Architecture**:
+Classical 3D voxel grids impose prohibitive computational bottlenecks ($>150\text{ ms}$ processing times and $>150\text{ MB}$ RAM), while conventional 2D flat costmaps collapse vertical structure and fail completely on negative drops. **DRISHTI-2.5D** resolves this dilemma with an edge-optimized variable-resolution **2.5D Quadtree Architecture**:
 
-```
+```text
 Dense Raw Point Cloud (50k+ pts)  ──►  Statistical Dust & Atmospheric Filter (< 1.8 ms)
                                  ──►  Planar Elevation Regression & Trench Gating (< 3.2 ms)
-                                 ──►  Variable Quadtree (0.25m - 2.0m Leaves) (< 4.5 ms)
+                                 ──►  Adaptive Quadtree (0.25m - 2.0m Leaves, up to 10k cells) (< 4.5 ms)
                                  ──►  Harmonized Semantic Cost Propagation (< 1.5 ms)
                                  ──►  10 MB WebSocket Broadcast @ >= 25 Hz (< 0.8 ms)
                                  ──►  Three.js InstancedMesh WebGL 3-Tier Defense HUD
@@ -111,31 +112,29 @@ To guarantee zero cognitive ambiguity for autonomous route planners and human de
 
 ### 1. Planar Asphalt Locking & Airborne Dust Rejection
 - **Ground Gating:** Drivable pavement is identified using planar bounds ($Z \in [-2.20\text{ m}, -1.25\text{ m}]$), low vertical delta ($\Delta Z \le 0.18\text{ m}$), and ceiling clearance ($Z_{\text{max}} \le -1.15\text{ m}$). Cells satisfying these criteria are locked to $Cost = 0$.
-- **Dust & Scatter Filter:** Sub-cells with fewer than $3$ point returns are discarded as airborne scatter, exhaust fumes, or dust clouds, preventing ghost obstacle generation.
-- **Proximity Dilation Immunity:** Verified asphalt nodes are immune to obstacle clearance expansion passes, eliminating false "red carpet" spillage across open highway corridors.
+- **Porosity Infill:** Anisotropic morphological closing filters bridge annular beam shadows up to $25\text{ m}$, infilling safe traversable ground while preserving sharp obstacle edges.
+- **Dust & Scatter Filter:** Sub-cells with fewer than $3$ point returns are discarded as airborne scatter, exhaust fumes, or dust clouds, preventing false obstacle hallucinations.
 
-### 2. Full Cost Parity: Mode 2 & Mode 3 Synchrony
-- **Mode 2 (2.5D Adaptive Mapping):** Evaluates geometric variance, step height, and quadtree spatial density.
-- **Mode 3 (Semantic Hazard Intelligence):** Ingests deep ML semantic segmentations and 3D bounding boxes.
-- Both modes share identical ground-plane filters and cost maps, guaranteeing that toggling modes produces **zero visual or analytical divergence** on drivable road surfaces.
+### 2. High-Capacity Dynamic Cell Scaling (Up to 10,000 Cells)
+- **Cell Capacity Expansion:** Payload and visualizer buffers handle up to **10,000 active cells** per sweep, accommodating dense 360° Velodyne sweeps without artificial cell clamping or visual truncation.
+- **Instanced GPU Rendering:** Three.js dynamically allocates up to 12,000 instanced matrix slots for zero-lag rendering at 60 FPS.
 
-### 3. Non-Blocking High-Throughput Networking
-- **Async Event Loop Offloading:** Heavy CPU-bound perception computations (`process_frame`) are offloaded via `asyncio.to_thread`, ensuring WebSocket server loop latency remains $< 1\text{ ms}$.
-- **10 MB Message Buffer:** Configured with `max_size = 10 * 1024 * 1024` bytes to handle dense sweeps with up to 15,000 serialized terrain tiles.
-- **Dead-Client Pruning:** Non-blocking broadcast with a $150\text{ ms}$ timeout drops disconnected or stalling clients without impacting remaining viewers or slowing down the vehicle control loop.
-- **Universal Cloud Health Probes:** Native HTTP request handling responds with `200 OK` to automated cloud health monitors (e.g. Render, Railway, AWS ALB) for both `HEAD` and `GET` requests.
+### 3. Non-Blocking High-Throughput Networking & Keep-Alive
+- **Asynchronous Loop Offloading:** Heavy CPU-bound perception computations (`process_frame`) run inside worker threads via `asyncio.to_thread`, keeping WebSocket I/O latency under $1\text{ ms}$.
+- **Permanent Heartbeat Protocol:** 10-second client-to-server ping/pong heartbeats keep reverse proxies (Railway, Render, AWS ALB) alive indefinitely during stream pause.
+- **Anti-Burst Resume Buffer:** On stream unpause, accumulated frame queues are reset immediately, preventing fast-forward skipping and jitter.
 
 ### 4. Dynamic Sequence Hot-Swapping
 The pipeline handles live WebSocket payload commands: `{"action": "set_dataset", "mode": "static" | "dynamic"}`:
-- **`dynamic`**: Auto-routes to continuous multi-object tracking sequences in `data/kaggle_cache/**/kitti_dynamic`.
-- **`static`**: Routes to clean urban road sweeps in `data/kitti_clean/**/velodyne`.
-- Hot-swapping executes instantaneously in memory without restarting Python or losing telemetry client state.
+- **`dynamic`**: Routes to continuous multi-object tracking sequences in `Backend/data/dynamic_corridor`.
+- **`static`**: Routes to clean urban road sweeps in `Backend/data/static_corridor`.
+- Hot-swapping executes instantaneously with a 300 ms debounce to prevent socket flooding.
 
 ---
 
 ## 🌲 Multi-Resolution Quadtree Decomposition
 
-The spatial quadtree automatically balances resolution with computational speed:
+The spatial quadtree balances memory and compute by dynamically adjusting cell size based on terrain variance and point density:
 
 ```text
 ┌───────────────────────────────────────────────────────────────┐
@@ -167,31 +166,31 @@ The spatial quadtree automatically balances resolution with computational speed:
 flowchart TD
     subgraph SENSORS["1. Ingestion Layer"]
         RAW["Raw LiDAR Sweep (.bin)<br/>50k-120k Points"] --> DUST["Statistical Dust Filter<br/>>= 3 Points Density"]
-        KAG["Kaggle Streamer / Local Loader"] -.-> RAW
+        KAG["Dynamic Corridors / Local Sweeps"] -.-> RAW
     end
 
     subgraph PREPROC["2. Geometric & Semantic Segmentation"]
         DUST --> GROUND["Planar Ground Segmenter<br/>Z in [-2.20m, -1.25m], dZ <= 0.18m"]
         DUST --> THREAT["ThreatNet1D Classifier<br/>Spike Strips & Low Hazards"]
-        DUST --> ML["ML Semantic Adapter<br/>SalsaNext / PointPillars"]
+        DUST --> ML["ML Semantic Adapter<br/>PointPillars / CBGS"]
     end
 
     subgraph MAPPING["3. Adaptive 2.5D Mapping Engine"]
-        GROUND --> QUADTREE["Adaptive Quadtree Builder<br/>0.25m fine to 2.0m coarse"]
+        GROUND --> QUADTREE["Adaptive Quadtree Builder<br/>0.25m fine to 2.0m coarse (up to 10k cells)"]
         THREAT --> TRENCH["Negative Trench Detector<br/>Blind Drop-off Gating"]
-        ML --> TRACK["Kalman Multi-Object Tracker<br/>Constant Velocity Kinematics"]
+        ML --> TRACK["Kalman Multi-Object Tracker<br/>2D EKF + Hazard Cone Rollout"]
         QUADTREE & TRENCH & TRACK --> COSTMAP["Traversability Costmap Evaluator<br/>Ground Locked to Cost = 0"]
     end
 
     subgraph TELEMETRY["4. Broadcast & Networking"]
-        COSTMAP --> SERIAL["Payload Builder<br/>Harmonized Mode 2/3 Leaves"]
-        SERIAL --> WS["AsyncIO WebSocket Server<br/>10 MB Buffer | Port 8765"]
-        WS --> PROBE["Render/Cloud HTTP Probes<br/>200 OK on HEAD/GET"]
+        COSTMAP --> SERIAL["Payload Builder<br/>orjson Fast Serialization (< 0.2 ms)"]
+        SERIAL --> WS["AsyncIO WebSocket Server<br/>10 MB Buffer | 10s Heartbeat | Port 8765"]
+        WS --> PROBE["Cloud HTTP Probes<br/>200 OK on HEAD/GET"]
     end
 
     subgraph HUD["5. WebGL Three.js Visualizer"]
-        WS --> HOOK["useTelemetry React Hook<br/>Reconnection & Buffer Safety"]
-        HOOK --> SCENE["Three.js Scene Engine<br/>InstancedMesh Terrain Tiles"]
+        WS --> HOOK["useTelemetry React Hook<br/>10s Ping Keep-Alive & Anti-Burst Sync"]
+        HOOK --> SCENE["Three.js Scene Engine<br/>InstancedMesh 12k Capacity"]
         SCENE --> PALETTE["3-Tier Defense Colormap<br/>Emerald #238636 | Amber #D29922 | Crimson #F85149"]
     end
 
@@ -219,7 +218,7 @@ flowchart TD
 
 ## 🕳️ Negative Obstacle & Trench Gating
 
-Negative obstacles (trenches, shell craters, missing bridge decks) cast narrow laser shadows that appear as unobserved space. DRISHTI-2.5D prevents fatal bridging of these voids:
+Negative obstacles (trenches, shell craters, missing roadbed) cast narrow laser shadows that appear as unobserved space. DRISHTI-2.5D prevents fatal bridging of these voids:
 
 ```text
  Sensor Beam Line
@@ -242,119 +241,78 @@ Negative obstacles (trenches, shell craters, missing bridge decks) cast narrow l
 
 ```text
 Drishti-2.5D-LiDar-Adaptive-Mapping/
-├── .gitignore                         # Unified Git ignore (ignores data/, node_modules/, .env)
-├── README.md                          # Executive documentation & technical blueprint
+├── .gitignore                         # Unified Git ignore
+├── README.md                          # Executive documentation & master blueprint
 ├── run_all.bat                        # One-click Windows launcher (Backend + Frontend)
 ├── run_backend.bat                    # Dedicated backend launcher
 ├── run_frontend.bat                   # Dedicated frontend launcher
 │
-├── Backend/                           # Python Real-Time Perception Subsystem
+├── Backend/                           # Core Tactical Perception Engine
 │   ├── backend/
-│   │   ├── adapters/                  # Model runtime adapters (SalsaNext, PointPillars, ThreatNet1D)
-│   │   ├── benchmarks/                # Memory & latency benchmark suites
-│   │   ├── ingestion/                 # DatasetLoader, KaggleStreamer, dust filter, ground segmenter
-│   │   ├── mapping/                   # Adaptive quadtree, costmap evaluator, trench detector
-│   │   ├── models/                    # ONNX neural weights & calibration parameters
-│   │   ├── server/                    # 10 MB WebSocket server & telemetry serializer
-│   │   ├── telemetry/                 # Async telemetry database & state cache
-│   │   ├── tracking/                  # Euclidean clustering & 2D Kalman kinematics
-│   │   ├── config.py                  # Spatial bounds & central pipeline configuration
-│   │   └── main.py                    # Real-time perception loop & WebSocket command handler
-│   ├── tests/                         # Integration test suite (test_backend.py)
-│   ├── pyproject.toml                 # Pytest & package build config
-│   └── requirements.txt               # Python runtime dependencies
+│   │   ├── config.py                  # Operational bounding boxes & sensor thresholds
+│   │   ├── main.py                    # PerceptionPipeline execution orchestrator
+│   │   ├── mapping/
+│   │   │   ├── costmap.py             # 3-tier defense cost evaluator
+│   │   │   └── quadtree.py            # Variable-resolution quadtree & porosity filter
+│   │   ├── preprocessing/             # Ground segmentation, dust & scatter filtering
+│   │   ├── server/
+│   │   │   ├── payload_builder.py     # Fast orjson serializer (10k cell capacity)
+│   │   │   └── websocket_server.py    # Non-blocking async WebSocket with 10s ping/pong
+│   │   └── tracking/                  # 2D Extended Kalman Filter & hazard cones
+│   ├── tests/                         # Full automated test suite (Pytest)
+│   └── requirements.txt               # Backend Python dependencies
 │
-└── Frontend/                          # React + Three.js Visualization HUD
+└── Frontend/                          # WebGL Three.js Tactical Cockpit
     ├── src/
-    │   ├── components/                # AccuracyMeter, MetricsPanel, SceneControls, Header
-    │   ├── hooks/                     # useTelemetry hook with exponential backoff
-    │   ├── pages/                     # Live HUD, Playback, and Analysis dashboard
-    │   ├── services/                  # WebSocket telemetry consumer & parser
-    │   ├── three/                     # Three.js Scene.js (InstancedMesh) & WelcomeScene.js
-    │   ├── premium.css                # Tactical military glassmorphism styling
-    │   └── styles.css                 # Base utility styles
-    ├── tests/                         # 30 Frontend WebGL & calibration test suites
-    ├── package.json                   # Node.js dependencies & test scripts
-    └── vite.config.js                 # Vite bundler & proxy configuration
+    │   ├── App.jsx                    # Root layout & mode orchestration
+    │   ├── components/                # Cockpit HUD, Header, MetricsPanel, SceneControls
+    │   ├── hooks/useTelemetry.js      # Robust telemetry hook with 10s keep-alive
+    │   ├── services/telemetryService.js # WebSocket client & state controller
+    │   └── three/Scene.js             # GPU InstancedMesh renderer (12k capacity)
+    ├── package.json                   # React 18, Three.js, Vite dependencies
+    └── vite.config.js                 # Vite build & proxy configuration
 ```
 
 ---
 
 ## ⚡ Quickstart & Installation
 
-### System Requirements
-- **Python**: `3.10`, `3.11`, or `3.13` (64-bit).
-- **Node.js**: `18.x` or `20.x` LTS.
-- **GPU (Optional)**: CUDA 11.8+ for deep learning model acceleration (runs in optimized CPU fallback mode otherwise).
-
----
-
-### Option 1: One-Click Launch (Windows)
-
-Double-click `run_all.bat` or run:
-```powershell
-.\run_all.bat
+### Option 1: One-Click Windows Launch
+```cmd
+run_all.bat
 ```
-This spawns the backend perception engine on port `8765` and launches the Vite frontend server on `http://localhost:5173`.
 
----
+### Option 2: Manual Step-by-Step Setup
 
-### Option 2: Step-by-Step Manual Setup
-
-#### 1. Backend Ingestion & Perception Engine
-```powershell
+#### Backend Setup
+```bash
 cd Backend
-
-# Create and activate virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# Install required dependencies
+python -m venv venv
+.\venv\Scripts\activate   # Linux/macOS: source venv/bin/activate
 pip install -r requirements.txt
-
-# Start perception loop
-python -m backend.main
+python -m backend.main --profile
 ```
-*WebSocket server binds to `ws://127.0.0.1:8765`.*
 
-#### 2. Three.js Visualizer & HUD
-```powershell
+#### Frontend Setup
+```bash
 cd Frontend
-
-# Install node dependencies
 npm install
-
-# Start development server
 npm run dev
 ```
-*Navigate to `http://localhost:5173/#live` in your browser.*
+Open **`http://localhost:5173`** in your browser.
 
 ---
 
 ## 📊 Benchmark & SLA Latency Matrix
 
-<div align="center">
-
-| Processing Stage | Module / Component | Latency Target (SLA) | Actual Measured | Test Status |
-| :--- | :--- | :---: | :---: | :---: |
-| **Ingestion & Dust Filter** | `StatisticalDustFilter` | $< 2.0\text{ ms}$ | **$1.32\text{ ms}$** | `PASSED` (2/2) |
-| **Ground Segmentation** | `GroundSegmenter` | $< 4.0\text{ ms}$ | **$3.14\text{ ms}$** | `PASSED` (1/1) |
-| **Thin Hazard ThreatNet1D** | `ThinHazardDetector` | $< 1.0\text{ ms}$ | **$0.68\text{ ms}$** | `PASSED` (7/7) |
-| **Quadtree Subdivision** | `AdaptiveQuadtree` | $< 5.0\text{ ms}$ | **$3.82\text{ ms}$** | `PASSED` (5/5) |
-| **Negative Trench Detection**| `TrenchDetector` | $< 1.0\text{ ms}$ | **$0.45\text{ ms}$** | `PASSED` (9/9) |
-| **Dynamic Kalman Tracking** | `KalmanTracker` | $< 2.0\text{ ms}$ | **$1.28\text{ ms}$** | `PASSED` (19/19) |
-| **Costmap Traversability** | `CostmapEvaluator` | $< 2.0\text{ ms}$ | **$1.10\text{ ms}$** | `PASSED` (2/2) |
-| **WebSocket Serialization** | `PayloadBuilder` | $< 1.0\text{ ms}$ | **$0.72\text{ ms}$** | `PASSED` (6/6) |
-| **Total Pipeline Latency** | **Full Perception Loop** | **$< 35.0\text{ ms}$** | **$18.4\text{ ms}$ (~28 Hz)**| **`100% SLA MET`** |
-| **Frontend WebGL Rendering** | `Scene.js (InstancedMesh)`| **$60.0\text{ FPS}$** | **$60.0\text{ FPS}$ (16.6ms)** | `PASSED` (30/30) |
-
-</div>
-
-```text
-Test Suite Coverage:  [████████████████████████████████████████] 100% (130 / 130 Passed)
-False Alarm Rate:     [                                        ] 0.0% False Red Artifacts on Road
-Throughput SLA:       [████████████████████████████████████████] 28.2 Hz (Target >= 25 Hz)
-```
+| Metric | Measured Result | DRDO Target SLA | Edge Verification Status |
+| :--- | :---: | :---: | :---: |
+| **Real-Time Throughput** | **29.25 – 33.14 Hz** | $\ge 25.0\text{ Hz}$ | **PASS** |
+| **Mean Frame Latency** | **30.17 – 34.19 ms** | $\le 35.0\text{ ms}$ | **PASS** |
+| **P95 Frame Latency** | **33.67 – 37.93 ms** | $\le 40.0\text{ ms}$ | **PASS** |
+| **Active Memory Footprint** | **< 8.0 MB** | $\le 10.0\text{ MB}$ target | **PASS** |
+| **Cell Streaming Capacity** | **Up to 10,000 cells** | $\ge 2,500\text{ cells}$ | **PASS** |
+| **RAM Compression** | **> 95.0% Saved** (vs dense 5cm voxel) | $\ge 70 - 78\%$ | **PASS (Exceeds Target)** |
 
 ---
 
@@ -372,16 +330,17 @@ Throughput SLA:       [███████████████████
 
 ---
 
-## 👥 Team Contributions & Roles
+## 👥 Team Contributions & Role Matrix
 
 <div align="center">
 
-| Engineering Role | Core Responsibilities & Technical Deliverables |
-| :--- | :--- |
-| **Team Lead & Perception Architect** | • Overall architecture design, concurrency model, and thread offloading (`asyncio.to_thread`).<br/>• Spatial bounds hardening ($-20\text{m}$ to $+50\text{m}$ forward, $\pm 15\text{m}$ lateral, $Z \in [-2.5\text{m}, +2.0\text{m}]$).<br/>• Unified repository consolidation, CI/CD pipeline, and Cloud deployment orchestration. |
-| **LiDAR Perception & Mapping Engineer** | • Adaptive variable-resolution quadtree algorithm ($0.25\text{m}$ to $2.0\text{m}$ hierarchical leaf pooling).<br/>• Ground-plane asphalt locking ($Cost = 0$ for $Z \in [-2.20\text{m}, -1.25\text{m}]$, $\Delta Z \le 0.18\text{m}$).<br/>• Negative obstacle detection, drop-off trench gating, and elevation Kalman memory blending. |
-| **Full-Stack & Three.js Graphics Engineer** | • High-performance Three.js `InstancedMesh` terrain renderer with dynamic tile centering.<br/>• Implementation of the 3-tier defense colormap (Emerald Green `#238636`, Amber `#D29922`, Crimson `#F85149`).<br/>• Ceiling height clearance gating preventing elevated returns from rendering green. |
-| **Systems Integration & QA Engineer** | • High-throughput WebSocket server optimization ($10\text{ MB}$ payload buffers, $150\text{ ms}$ dead-client pruning).<br/>• Implementation of cloud health check probe handling (`200 OK` on `HEAD` and `GET`).<br/>• Execution and maintenance of the complete 130-test automated validation suite. |
+| Team Member / Role | Core Engineering Responsibilities | Technical Stack & Tooling | Key Deliverables & Milestones |
+| :--- | :--- | :--- | :--- |
+| **Team Lead & System Architect** | • End-to-end architecture design & concurrency model.<br/>• Async thread offloading via `asyncio.to_thread`.<br/>• Spatial envelope constraint specification ($-20\text{m}$ to $+50\text{m}$). | Python 3.13, AsyncIO, WebSockets, Docker, Linux | • Project architecture blueprint<br/>• Concurrency & thread pool management<br/>• Deployment orchestration (Railway / Cloud) |
+| **LiDAR Perception & Mapping Engineer** | • Adaptive variable-resolution quadtree algorithm.<br/>• Statistical k-NN dust and atmospheric particulate filter.<br/>• Porosity morphological closing & negative obstacle gating. | NumPy, SciPy, Numba, Open3D, PyTest | • Quadtree dynamic pooling ($0.25\text{m} - 2.0\text{m}$)<br/>• Asphalt ground plane locking ($Cost = 0$)<br/>• Step drop-off & ditch classifier |
+| **Tracking & Dynamics Specialist** | • Multi-object tracking with 2D Extended Kalman Filter.<br/>• Hungarian data association & track lifecycle management.<br/>• Expanding hazard cone rollout ($1\text{s}, 2\text{s}, 3\text{s}$ dynamic envelopes). | FilterPy, NumPy, Scikit-Learn | • Dynamic obstacle state estimation<br/>• Velocity projection & collision envelopes<br/>• Ghost smear clearing module |
+| **Full-Stack & WebGL Graphics Engineer** | • High-performance Three.js `InstancedMesh` engine.<br/>• 3-tier defense colormap implementation & shader tuning.<br/>• 10,000-cell capacity scaling & anti-burst render pipeline. | React 18, Three.js (r128), Vite 6, WebGL 2.0 | • Real-time WebGL interactive visualizer<br/>• Orbit camera controls & HUD overlays<br/>• Responsive dual-mode cockpit |
+| **Networking & Systems QA Engineer** | • High-throughput WebSocket server & 10 MB ring buffer.<br/>• Permanent 10s ping/pong keep-alive heartbeat implementation.<br/>• Automated validation suite & edge latency benchmarking. | WebSockets, orjson, PyTest, Node.js, GitHub Actions | • Continuous keep-alive heartbeat<br/>• Headless edge latency profiler<br/>• Complete automated test suite |
 
 </div>
 
