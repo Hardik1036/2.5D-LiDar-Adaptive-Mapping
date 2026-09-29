@@ -37,7 +37,7 @@ KITTI_CLEAN_DIR = _resolve_dataset_path(
     "data/sweeps",
 )
 
-DEFAULT_DATASET_DIR = KITTI_DYNAMIC_DIR if (KITTI_DYNAMIC_DIR.exists() and any(KITTI_DYNAMIC_DIR.glob("*.bin"))) else KITTI_CLEAN_DIR
+DEFAULT_DATASET_DIR = KITTI_CLEAN_DIR if (KITTI_CLEAN_DIR.exists() and any(KITTI_CLEAN_DIR.glob("*.bin"))) else KITTI_DYNAMIC_DIR
 DATASET_DIR = DEFAULT_DATASET_DIR
 
 

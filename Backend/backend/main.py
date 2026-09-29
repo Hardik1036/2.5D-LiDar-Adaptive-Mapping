@@ -70,7 +70,7 @@ from backend.config import (
 from backend.ingestion.dust_filter import StatisticalDustFilter
 from backend.ingestion.ground_segmentation import GroundSegmenter
 from backend.ingestion.thin_hazard_detector import ThinHazardDetector
-from backend.ingestion.dataset_loader import DatasetLoader
+from backend.ingestion.dataset_loader import DatasetLoader, resolve_sweep_directory
 from backend.mapping.costmap import CostmapEvaluator
 from backend.mapping.degraded_mode import SensorHealthMonitor
 from backend.mapping.negative_obstacles import TrenchDetector
@@ -221,9 +221,13 @@ class PerceptionPipeline:
         self.telemetry_db = AsyncTelemetryDB()
 
         # Dataset loader & dynamic sequence routing
-        self.dataset_loader = DatasetLoader(self.dataset_dir)
-        self.loader = self.dataset_loader
         self.current_dataset_mode = "static"
+        if dataset_dir is not None:
+            self.dataset_loader = DatasetLoader(mode_or_dir=self.dataset_dir, mode=self.current_dataset_mode)
+        else:
+            self.dataset_loader = DatasetLoader(mode=self.current_dataset_mode)
+        self.loader = self.dataset_loader
+        self.dataset_dir = self.dataset_loader.data_dir
 
         # Dynamic Playback Controls (HUD WebSocket listener)
         self.is_paused = False
@@ -276,43 +280,12 @@ class PerceptionPipeline:
         elif action == "set_dataset":
             data = cmd_data
             target_mode = str(data.get("mode", "static")).lower()
-            search_roots = [
-                Path("data/kaggle_cache"),
-                Path("data"),
-                Path(__file__).resolve().parent.parent / "data" / "kaggle_cache",
-                Path(__file__).resolve().parent.parent / "data",
-            ]
-
-            if target_mode == "dynamic":
-                # Match dynamic tracking sequences
-                candidates = []
-                for root in search_roots:
-                    if root.exists():
-                        candidates.append(root / "dynamic_corridor" / "velodyne")
-                        candidates.extend(list(root.rglob("*dynamic*/**/velodyne")))
-                        candidates.extend(list(root.rglob("*tracking*/**/velodyne")))
-                        candidates.extend(list(root.rglob("*dynamic*")))
-
-                target_dir = next(
-                    (c for c in candidates if c.is_dir() and any(c.glob("*.bin"))),
-                    None,
-                )
-                desc = "Continuous Dynamic Multi-Object Tracking"
-            else:
-                # Match clean/static baseline sequences
-                candidates = []
-                for root in search_roots:
-                    if root.exists():
-                        candidates.append(root / "static_corridor" / "velodyne")
-                        candidates.extend(list(root.rglob("*clean*/**/velodyne")))
-                        candidates.extend(list(root.rglob("*clean*")))
-                        candidates.append(root / "kitti_clean" / "training" / "velodyne")
-
-                target_dir = next(
-                    (c for c in candidates if c.is_dir() and any(c.glob("*.bin"))),
-                    None,
-                )
-                desc = "Clean Static Urban Road Corridor"
+            target_dir = resolve_sweep_directory(preferred_mode=target_mode)
+            desc = (
+                "Clean Static Urban Road Corridor (Backend/data/static_corridor)"
+                if target_mode == "static"
+                else "Continuous Dynamic Multi-Object Tracking (Backend/data/dynamic_corridor)"
+            )
 
             if target_dir and target_dir.exists():
                 logger.info(f"[Perception] Switching dataset stream to: {desc} ({target_dir})")

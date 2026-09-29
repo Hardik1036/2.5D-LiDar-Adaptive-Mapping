@@ -212,13 +212,14 @@ def test_real_world_lidar_sweep_ingestion():
     from pathlib import Path
 
     candidates = [
+        Path("Backend/data/static_corridor/velodyne/000000.bin"),
+        Path("Backend/data/dynamic_corridor/velodyne/000000.bin"),
+        Path("data/static_corridor/velodyne/000000.bin"),
+        Path("data/dynamic_corridor/velodyne/000000.bin"),
+        Path(__file__).resolve().parent.parent / "data" / "static_corridor" / "velodyne" / "000000.bin",
+        Path(__file__).resolve().parent.parent / "data" / "dynamic_corridor" / "velodyne" / "000000.bin",
         Path("data/test_sweep/000000.bin"),
         Path("Backend/data/test_sweep/000000.bin"),
-        Path(__file__).resolve().parent.parent / "data" / "test_sweep" / "000000.bin",
-        Path(__file__).resolve().parent.parent / "data" / "kitti_clean" / "training" / "velodyne" / "000000.bin",
-        Path(__file__).resolve().parent.parent / "data" / "kaggle_cache" / "data" / "kitti_clean" / "training" / "velodyne" / "000000.bin",
-        Path("data/kaggle_cache/data/kitti_clean/training/velodyne/000000.bin"),
-        Path("Backend/data/kaggle_cache/data/kitti_clean/training/velodyne/000000.bin"),
     ]
     sweep_path = next((p for p in candidates if p.exists()), None)
     assert sweep_path is not None, "Real-world LiDAR sweep file (000000.bin) not found."

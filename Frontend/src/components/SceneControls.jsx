@@ -240,8 +240,8 @@ export default function SceneControls({
           {/* Status Feedback */}
           <p className="mt-2 text-[10px] font-mono text-slate-400 tracking-tight leading-relaxed">
             {activeDataset === "static"
-              ? "Streaming clean baseline corridor from data/kaggle_cache/."
-              : "Streaming continuous multi-object dynamic tracking from data/kaggle_cache/."}
+              ? "Streaming clean baseline corridor from Backend/data/static_corridor/."
+              : "Streaming continuous multi-object dynamic tracking from Backend/data/dynamic_corridor/."}
           </p>
         </div>
       </section>
