@@ -287,6 +287,7 @@ class PerceptionPipeline:
                 candidates = []
                 for root in search_roots:
                     if root.exists():
+                        candidates.append(root / "dynamic_corridor" / "velodyne")
                         candidates.extend(list(root.rglob("*dynamic*/**/velodyne")))
                         candidates.extend(list(root.rglob("*tracking*/**/velodyne")))
                         candidates.extend(list(root.rglob("*dynamic*")))
@@ -301,6 +302,7 @@ class PerceptionPipeline:
                 candidates = []
                 for root in search_roots:
                     if root.exists():
+                        candidates.append(root / "static_corridor" / "velodyne")
                         candidates.extend(list(root.rglob("*clean*/**/velodyne")))
                         candidates.extend(list(root.rglob("*clean*")))
                         candidates.append(root / "kitti_clean" / "training" / "velodyne")

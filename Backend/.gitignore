@@ -63,14 +63,14 @@ Thumbs.db
 *.lnk
 
 # Data & Binary Sweeps
-data/
-backend/data/
-kaggle_cache/
-*.bin
-*.npy
-*.tar.gz
-*.tar
+**/kaggle_cache/
 *.zip
+*.tar.gz
 *.mcap
+*.npy
 
-
+# Whitelist bundled 50 static and 70 dynamic sweeps
+!data/static_corridor/velodyne/*.bin
+!data/dynamic_corridor/velodyne/*.bin
+!Backend/data/static_corridor/velodyne/*.bin
+!Backend/data/dynamic_corridor/velodyne/*.bin

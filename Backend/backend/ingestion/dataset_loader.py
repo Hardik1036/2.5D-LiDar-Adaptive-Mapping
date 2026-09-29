@@ -15,22 +15,57 @@ logger = logging.getLogger("DatasetLoader")
 class DatasetLoader:
     """
     Manages loading, parsing, and streaming of Velodyne .bin LiDAR sweeps from local disk.
-    Supports thread-safe directory hot-swapping and continuous looping.
+    Supports thread-safe directory hot-swapping, bundled static/dynamic corridors, and continuous looping.
     """
 
     def __init__(
         self,
-        dataset_dir: Optional[Union[str, Path]] = None,
+        mode_or_dir: Optional[Union[str, Path]] = None,
+        mode: Optional[str] = None,
         loop: bool = True,
     ):
         self._lock = threading.Lock()
         self.loop = loop
         self.dataset_dir: Optional[Path] = None
+        self.data_dir: Optional[Path] = None
         self.files: List[Path] = []
+        self.bin_files: List[Path] = []
         self.current_index: int = 0
 
-        if dataset_dir:
-            self.set_directory(str(dataset_dir))
+        base_data = Path(__file__).resolve().parent.parent.parent / "data"
+
+        target: Optional[Path] = None
+        active_mode = (mode or "").lower() if mode else None
+
+        if active_mode is None and isinstance(mode_or_dir, str) and mode_or_dir.lower() in ("static", "dynamic"):
+            active_mode = mode_or_dir.lower()
+        elif mode_or_dir is not None and not isinstance(mode_or_dir, str):
+            target = Path(mode_or_dir)
+        elif isinstance(mode_or_dir, str) and mode_or_dir.lower() not in ("static", "dynamic") and (Path(mode_or_dir).exists() or "/" in mode_or_dir or "\\" in mode_or_dir):
+            target = Path(mode_or_dir)
+
+        if target is None:
+            active_mode = active_mode or "dynamic"
+            if active_mode == "static":
+                target = base_data / "static_corridor" / "velodyne"
+            else:
+                target = base_data / "dynamic_corridor" / "velodyne"
+
+            if not target.exists() or len(list(target.glob("*.bin"))) == 0:
+                fallback_candidates = [
+                    base_data / "kitti_clean" / "training" / "velodyne",
+                    base_data / "kaggle_cache" / "data" / "kitti_clean" / "training" / "velodyne",
+                    base_data / "test_sweep",
+                ]
+                for cand in fallback_candidates:
+                    if cand.exists() and len(list(cand.glob("*.bin"))) > 0:
+                        target = cand
+                        break
+
+        self.set_directory(str(target))
+        self.data_dir = self.dataset_dir
+        self.bin_files = self.files
+        logger.info(f"[DatasetLoader] Mode: '{active_mode or 'custom'}' | Loaded {len(self.bin_files)} frames from {self.data_dir}")
 
     def set_directory(self, new_dir: str) -> bool:
         """
@@ -50,7 +85,9 @@ class DatasetLoader:
         if new_files:
             with self._lock:
                 self.dataset_dir = target_path
+                self.data_dir = target_path
                 self.files = new_files
+                self.bin_files = new_files
                 self.current_index = 0
             logger.info(f"[DatasetLoader] Swapped active dataset to {len(self.files)} sweeps in {new_dir}")
             return True

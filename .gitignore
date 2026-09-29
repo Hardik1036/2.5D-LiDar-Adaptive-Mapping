@@ -1,10 +1,22 @@
-﻿# Data and Binaries (Do NOT push huge raw point cloud files)
+# Ignore raw Kaggle download caches
+**/kaggle_cache/
+*.zip
+*.tar.gz
+
+# Data and Binaries (Do NOT push huge raw point cloud files)
 data/
-Backend/data/
-*.bin
+Backend/data/*
+!Backend/data/static_corridor/
+!Backend/data/static_corridor/**
+!Backend/data/dynamic_corridor/
+!Backend/data/dynamic_corridor/**
 *.pkl
 *.npy
 *.npz
+
+# Whitelist bundled 50 static and 70 dynamic sweeps
+!Backend/data/static_corridor/velodyne/*.bin
+!Backend/data/dynamic_corridor/velodyne/*.bin
 
 # Python Caches & Environments
 __pycache__/
@@ -37,4 +49,3 @@ yarn-error.log*
 *.swp
 Thumbs.db
 Desktop.ini
-
