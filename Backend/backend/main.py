@@ -264,6 +264,10 @@ class PerceptionPipeline:
         elif action == "toggle_pause":
             self.is_paused = not self.is_paused
             logger.info(f"Pipeline playback pause toggled: {self.is_paused}")
+        elif action in ("next", "step"):
+            self.is_paused = True
+            self._step_once = True
+            logger.info("Pipeline playback single STEP requested via client command.")
         elif action == "set_speed":
             try:
                 speed = float(cmd_data.get("speed") or cmd_data.get("value", 1.0))
@@ -778,8 +782,11 @@ class PerceptionPipeline:
         try:
             while self.is_running:
                 if self.is_paused:
-                    await asyncio.sleep(0.05)
-                    continue
+                    if getattr(self, "_step_once", False):
+                        self._step_once = False
+                    else:
+                        await asyncio.sleep(0.05)
+                        continue
 
                 t0 = time.perf_counter()
 
@@ -899,8 +906,8 @@ def parse_args():
     parser.add_argument(
         "--fps",
         type=float,
-        default=CONFIG.TARGET_FPS,
-        help=f"Target loop frequency in Hz (default: {CONFIG.TARGET_FPS})",
+        default=float(os.environ.get("TARGET_FPS", 4.0)),
+        help="Target loop frequency in Hz (default: 4.0)",
     )
     parser.add_argument(
         "--max-frames",
@@ -951,10 +958,15 @@ def main():
     data_loader = DatasetLoader(mode="dynamic")
     logger.info(f"[Main] Bundled sweep loader ready with {len(data_loader)} frames ({data_loader.data_dir})")
 
+    # In main.py where PerceptionPipeline is instantiated:
+    # Lower frequency (4.0 Hz) stops CPU throttling and prevents latency ballooning on Render's 0.2 vCPU
+    TARGET_FPS = 4.0
+    target_fps = args.fps if args.fps is not None else TARGET_FPS
+
     pipeline = PerceptionPipeline(
         host=args.host,
         port=args.port,
-        target_fps=args.fps,
+        target_fps=target_fps,
         use_redis=args.use_redis,
         ros_output=args.ros_output,
         profile_mode=args.profile,

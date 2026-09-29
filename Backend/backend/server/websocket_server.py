@@ -13,6 +13,9 @@ import json
 import websockets
 import websockets.exceptions
 
+# Suppress websockets internal logging of rejected HTTP probe connections
+logging.getLogger("websockets.server").setLevel(logging.CRITICAL)
+
 # Lenient HTTP request parsing to support HEAD, GET, and OPTIONS for cloud health check probes (Render, Railway, etc.)
 try:
     from websockets import http11
@@ -20,20 +23,36 @@ try:
 
     @classmethod
     def _lenient_http11_parse(cls, read_line):
+        """Safely yields lines and absorbs early EOF/probe closures."""
         try:
             request_line = yield from parse_line(read_line)
-        except EOFError as exc:
-            raise EOFError("connection closed while reading HTTP request line") from exc
+        except (EOFError, ConnectionResetError):
+            # Cleanly return None on zero-byte closures or dropped probe connections
+            return None
+        except Exception as exc:
+            logger.debug(f"[WebSocketServer] Suppressed parse line anomaly: {exc}")
+            return None
+
+        if not request_line:
+            return None
+
         try:
             method, raw_path, protocol = request_line.split(b" ", 2)
         except ValueError:
-            raise ValueError(f"invalid HTTP request line: {d(request_line)}") from None
+            return None
         if protocol != b"HTTP/1.1":
             raise ValueError(f"unsupported protocol; expected HTTP/1.1: {d(request_line)}")
         if method not in (b"GET", b"HEAD", b"OPTIONS"):
             raise ValueError(f"unsupported HTTP method; expected GET or HEAD; got {d(method)}")
         path = raw_path.decode("ascii", "surrogateescape")
-        headers = yield from parse_headers(read_line)
+        try:
+            headers = yield from parse_headers(read_line)
+        except (EOFError, ConnectionResetError):
+            return None
+        except Exception as exc:
+            logger.debug(f"[WebSocketServer] Suppressed parse headers anomaly: {exc}")
+            return None
+
         if "Transfer-Encoding" in headers:
             raise NotImplementedError("transfer codings aren't supported")
         if "Content-Length" in headers:
@@ -51,20 +70,31 @@ try:
     from websockets.legacy.http import read_line, read_headers, d
 
     async def _lenient_legacy_read_request(stream):
+        """Safely reads request and absorbs early EOF/probe closures."""
         try:
             request_line = await read_line(stream)
-        except EOFError as exc:
-            raise EOFError("connection closed while reading HTTP request line") from exc
+        except (EOFError, ConnectionResetError):
+            return None, {}
+        except Exception as exc:
+            logger.debug(f"[WebSocketServer] Suppressed legacy read request anomaly: {exc}")
+            return None, {}
+
+        if not request_line:
+            return None, {}
+
         try:
             method, raw_path, version = request_line.split(b" ", 2)
         except ValueError:
-            raise ValueError(f"invalid HTTP request line: {d(request_line)}") from None
+            return None, {}
         if method not in (b"GET", b"HEAD", b"OPTIONS"):
             raise ValueError(f"unsupported HTTP method: {d(method)}")
         if version != b"HTTP/1.1":
             raise ValueError(f"unsupported HTTP version: {d(version)}")
         path = raw_path.decode("ascii", "surrogateescape")
-        headers = await read_headers(stream)
+        try:
+            headers = await read_headers(stream)
+        except (EOFError, ConnectionResetError):
+            return None, {}
         return path, headers
 
     legacy_http.read_request = _lenient_legacy_read_request
@@ -79,36 +109,34 @@ except ImportError:
 
 from backend.config import CONFIG, SERVER
 
-logger = logging.getLogger("TelemetryServer")
+logger = logging.getLogger("WebSocketServer")
 
 
-def process_http_request(*args, **kwargs):
+async def health_check_handler(connection, request=None, *args, **kwargs):
     """
-    Handles Render / load-balancer health checks (HEAD/GET).
-    Compatible with:
-      - websockets < 13: process_request(path, headers)
-      - websockets >= 13: process_request(connection, request)
+    Directly answers Render's HTTP port/health probes with 200 OK
+    without attempting a full WebSocket handshake upgrade.
+    Compatible with websockets >= 13 (connection, request) and < 13 (path, headers).
     """
-    # websockets >= 13.0: args is (connection, request)
-    if len(args) == 2 and hasattr(args[1], "headers"):
-        connection, request = args
-        # Allow normal WebSocket upgrade
-        if "Upgrade" in request.headers:
-            return None
-        # Return 200 OK response using modern websockets response object
-        if hasattr(connection, "respond"):
-            return connection.respond(http.HTTPStatus.OK, "OK\nDRISHTI-2.5D Perception Engine Online\n")
-        return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
-
-    # websockets < 13.0: args is (path, headers)
-    if len(args) == 2:
-        path, headers = args
-        if isinstance(headers, dict) or hasattr(headers, "get"):
-            if "Upgrade" in headers:
-                return None
+    # websockets >= 13: connection, request
+    if request is not None and hasattr(request, "headers"):
+        headers = dict(request.headers)
+        if headers.get("Upgrade", "").lower() != "websocket":
+            if hasattr(connection, "respond"):
+                return connection.respond(http.HTTPStatus.OK, "OK\nDRISHTI-2.5D Perception Engine Online\n")
             return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
+        return None
+
+    # websockets < 13: (path, headers) where connection is path and request is headers
+    if isinstance(request, (dict, list)) or hasattr(request, "get"):
+        headers = dict(request) if hasattr(request, "items") else request
+        if hasattr(headers, "get") and headers.get("Upgrade", "").lower() != "websocket":
+            return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
+        return None
 
     return None
+
+process_http_request = health_check_handler
 
 
 class TelemetryWebSocketServer:
@@ -138,42 +166,79 @@ class TelemetryWebSocketServer:
         """Registers a callback for processing frontend HUD playback controls."""
         self.command_callback = callback
 
+    def set_dataset_mode(self, mode: str):
+        """Dispatches dataset mode swap to command callback if registered."""
+        if self.command_callback is not None:
+            cmd = {"action": "set_dataset", "mode": mode}
+            try:
+                if asyncio.iscoroutinefunction(self.command_callback):
+                    asyncio.create_task(self.command_callback(cmd))
+                else:
+                    self.command_callback(cmd)
+            except Exception as e:
+                logger.warning(f"[WebSocketServer] Failed to set dataset mode: {e}")
+
     async def _handler(self, websocket):
         """Registers new client connection and handles incoming messages/heartbeats."""
         self.connected_clients.add(websocket)
         remote = getattr(websocket, "remote_address", "client")
-        logger.info(f"Client connected from {remote}. Active concurrent clients: {len(self.connected_clients)}")
+        logger.info(f"[TelemetryServer]: client connected from {remote}. Active clients: {len(self.connected_clients)}")
         try:
-            async for raw_msg in websocket:
-                if self.command_callback is not None:
-                    try:
-                        if isinstance(raw_msg, bytes):
-                            raw_msg = raw_msg.decode("utf-8")
-                        if isinstance(raw_msg, str):
-                            try:
-                                msg_data = json.loads(raw_msg)
-                            except Exception:
-                                msg_data = {"command": raw_msg.strip().lower()}
-                        elif isinstance(raw_msg, dict):
-                            msg_data = raw_msg
-                        else:
-                            msg_data = {"command": str(raw_msg)}
+            async for raw_message in websocket:
+                try:
+                    if isinstance(raw_message, bytes):
+                        raw_message = raw_message.decode("utf-8")
+                    if isinstance(raw_message, str):
+                        try:
+                            data = json.loads(raw_message)
+                        except json.JSONDecodeError:
+                            data = {"command": raw_message.strip().lower()}
+                    elif isinstance(raw_message, dict):
+                        data = raw_message
+                    else:
+                        data = {"command": str(raw_message)}
 
-                        if asyncio.iscoroutinefunction(self.command_callback):
-                            await self.command_callback(msg_data)
-                        else:
-                            self.command_callback(msg_data)
-                    except Exception as e:
-                        logger.debug(f"Command processing error from {remote}: {e}")
-        except (websockets.exceptions.ConnectionClosed, ConnectionResetError, asyncio.CancelledError):
+                    action = data.get("action") or data.get("command") or data.get("mode")
+
+                    # Acknowledge step / next / playback commands cleanly
+                    if action in ("next", "step"):
+                        logger.debug("[WebSocketServer] Stepping single frame")
+                    elif action in ("play", "resume", "pause"):
+                        logger.debug(f"[WebSocketServer] Playback set to {action}")
+                    elif "dataset" in data or "set_dataset" in data or action == "set_dataset":
+                        target_mode = data.get("dataset") or data.get("mode")
+                        if target_mode in ("static", "dynamic"):
+                            self.set_dataset_mode(target_mode)
+
+                    if self.command_callback is not None:
+                        try:
+                            if asyncio.iscoroutinefunction(self.command_callback):
+                                await self.command_callback(data)
+                            else:
+                                self.command_callback(data)
+                        except Exception as cmd_err:
+                            logger.warning(f"[WebSocketServer] Ignored non-fatal command callback error: {cmd_err}")
+
+                except json.JSONDecodeError:
+                    pass
+                except Exception as cmd_err:
+                    logger.warning(f"[WebSocketServer] Ignored non-fatal command error: {cmd_err}")
+        except (
+            websockets.exceptions.ConnectionClosed,
+            getattr(websockets.exceptions, "ConnectionClosedOK", ConnectionResetError),
+            getattr(websockets.exceptions, "ConnectionClosedError", ConnectionResetError),
+            ConnectionResetError,
+            asyncio.CancelledError,
+        ):
             pass
         except Exception as e:
-            logger.debug(f"Client {remote} connection closed: {e}")
+            logger.debug(f"[WebSocketServer] Client {remote} connection closed: {e}")
         finally:
             self.connected_clients.discard(websocket)
-            logger.info(f"Client disconnected from {remote}. Remaining clients: {len(self.connected_clients)}")
+            logger.info(f"[TelemetryServer]: client disconnected from {remote}. Active clients: {len(self.connected_clients)}")
 
-    _process_request = staticmethod(process_http_request)
+    _process_request = staticmethod(health_check_handler)
+    client_handler = _handler
     handler = _handler
 
     async def start(self):
@@ -190,14 +255,14 @@ class TelemetryWebSocketServer:
         host = getattr(self, "host", "0.0.0.0") or "0.0.0.0"
 
         self.server = await websockets.serve(
-            self.handler,
-            host,
-            port,
+            self.client_handler,
+            host=host,
+            port=port,
             max_size=10 * 1024 * 1024,      # 10 MB max payload size for dense point/quadtree sweeps
             ping_interval=getattr(self, "ping_interval", 10),               # Keep alive heartbeat every 10s
             ping_timeout=getattr(self, "ping_timeout", 30),                 # Reconnect drop window
             origins=origins,
-            process_request=process_http_request,
+            process_request=health_check_handler,
         )
         self._is_running = True
         logger.info(f"[WebSocketServer] Listening on ws://{host}:{port} with HTTP probe handling (Max Buffer: 10MB)")
