@@ -308,16 +308,19 @@ class PointPillarsConfig:
 
         if yaml_path:
             try:
-                import yaml
+                import yaml  # type: ignore
                 with open(yaml_path, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f)
                 class_names = tuple(data.get("CLASS_NAMES", cls.CLASS_NAMES))
                 data_cfg = data.get("DATA_CONFIG", {})
-                pc_range = tuple(float(x) for x in data_cfg.get("POINT_CLOUD_RANGE", cls.POINT_CLOUD_RANGE))
+                pc_list = [float(x) for x in data_cfg.get("POINT_CLOUD_RANGE", cls.POINT_CLOUD_RANGE)]
+                pc_range = (pc_list[0], pc_list[1], pc_list[2], pc_list[3], pc_list[4], pc_list[5]) if len(pc_list) == 6 else cls.POINT_CLOUD_RANGE
                 voxel_size = cls.VOXEL_SIZE
                 for proc in data_cfg.get("DATA_PROCESSOR", []):
                     if "VOXEL_SIZE" in proc:
-                        voxel_size = tuple(float(v) for v in proc["VOXEL_SIZE"])
+                        vs = [float(v) for v in proc["VOXEL_SIZE"]]
+                        if len(vs) == 3:
+                            voxel_size = (vs[0], vs[1], vs[2])
                         break
                 return cls(
                     POINT_CLOUD_RANGE=pc_range,

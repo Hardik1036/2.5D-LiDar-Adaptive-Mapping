@@ -4,11 +4,11 @@ Edge-tailored for high-speed transmission at >= 25 Hz using orjson for <= 0.2 ms
 """
 
 import os
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 import numpy as np
 
 try:
-    import psutil
+    import psutil  # type: ignore
     _process = psutil.Process(os.getpid())
 except Exception:
     _process = None
@@ -32,6 +32,8 @@ class TelemetryPayload(str):
     Enables zero-copy network broadcasting over WebSockets while remaining directly
     accessible as a dictionary in test and verification suites.
     """
+    _dict: dict
+
     def __new__(cls, content: str, parsed_dict: Optional[dict] = None):
         s = super().__new__(cls, content)
         s._dict = parsed_dict if parsed_dict is not None else {}
@@ -294,7 +296,7 @@ class PayloadBuilder:
             track_speed = float(getattr(track, "speed", 0.0))
             track_heading = float(getattr(track, "heading", 0.0))
 
-            obj_dict = {
+            obj_dict: Dict[str, Any] = {
                 "id": track_id,
                 "class": track_class,
                 "x": round(track_x, 2),
@@ -352,7 +354,7 @@ class PayloadBuilder:
 
         payload_dict = {
             "timestamp": round(float(timestamp), 2),
-            "frame_id": int(frame_id),
+            "frame_id": frame_id,
             "system_status": stats.get("system_status", "ALL_SYSTEMS_NOMINAL"),
             "system_stats": stats,
             "cells": serialized_cells,
