@@ -52,8 +52,8 @@ export default function Settings({ onClose, options, setOptions }) {
       </p>
       <div className="settings-note">
         <h3>Data connection</h3>
-        <p>Local: ws://127.0.0.1:8765</p>
-        <p>Hosted: Railway WebSocket</p>
+        <p>Local mode: Localhost Pipeline (Dev)</p>
+        <p>Production mode: Drishti Cloud Production Link</p>
         <span>
           Connection details and schema normalization live in
           telemetryService.js. No backend settings are changed here.

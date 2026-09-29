@@ -86,11 +86,11 @@ export default function Header({
                 isManuallyDisconnected
                   ? "Backend manually disconnected (Procedural simulation active)"
                   : status === "live"
-                    ? "Connected to Python LiDAR perception backend (ws://127.0.0.1:8765)"
+                    ? "Connected to Drishti LiDAR perception pipeline"
                     : status === "simulated"
                       ? "Simulation fallback active (Backend disconnected)"
                       : status === "connecting"
-                        ? "Connecting to backend ws://127.0.0.1:8765..."
+                        ? "Connecting to Drishti perception pipeline..."
                         : "Disconnected from backend. Retrying with exponential backoff..."
               }
             >
@@ -109,7 +109,7 @@ export default function Header({
                 onClick={onToggleBackend}
                 title={
                   isManuallyDisconnected
-                    ? "Reconnect to Python LiDAR backend (ws://127.0.0.1:8765)"
+                    ? "Reconnect to Drishti LiDAR backend"
                     : "Disconnect from live backend and switch to procedural simulation"
                 }
               >

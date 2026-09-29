@@ -186,13 +186,13 @@ export default function App() {
             {page === "playback"
               ? "Recorded-view workspace"
               : telemetry.isManuallyDisconnected
-                ? "Backend manually disconnected · Procedural simulation active (ws://127.0.0.1:8765 paused)"
+                ? "Backend manually disconnected · Procedural simulation active (Pipeline paused)"
                 : telemetry.status === "live" || telemetry.status === "connected"
-                  ? "WebSocket telemetry (CONNECTED · ws://127.0.0.1:8765)"
+                  ? "Telemetry Stream (CONNECTED · Drishti Core Pipeline)"
                   : telemetry.status === "simulated"
                     ? "Simulation fallback active · retrying backend connection"
                     : telemetry.status === "connecting"
-                      ? "Connecting to backend ws://127.0.0.1:8765..."
+                      ? "Connecting to Drishti perception pipeline..."
                       : "DISCONNECTED · retrying backend connection"}
           </span>
           <span>Coordinates: metres · Heading: radians · Z-up</span>

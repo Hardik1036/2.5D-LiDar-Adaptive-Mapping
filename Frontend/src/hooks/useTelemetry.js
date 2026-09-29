@@ -158,7 +158,7 @@ export function useTelemetry(customUrl) {
     userDisconnectedRef.current = false;
     setIsManuallyDisconnected(false);
     telemetryControl.current?.reconnect?.();
-    setNotice("Reconnecting to LiDAR perception backend (ws://127.0.0.1:8765)...");
+    setNotice("Reconnecting to Drishti Perception Pipeline...");
   }
   function toggleBackend() {
     if (userDisconnectedRef.current) {

@@ -5,9 +5,9 @@ import AccuracyMeter from "./AccuracyMeter.jsx";
 const format = (n, decimals = 0) =>
   typeof n === "number"
     ? n.toLocaleString("en-US", {
-        minimumFractionDigits: decimals,
-        maximumFractionDigits: decimals,
-      })
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    })
     : "—";
 const bands = [
   ["Safe ground", "0–50", "#2EA043"],
@@ -27,11 +27,18 @@ export default function MetricsPanel({ summary, status, options }) {
         <span className="section-mark">FEED</span>
       </div>
       <p className="source-note">
-        {status === "live" || status === "connected"
-          ? "Reported by backend · ws://127.0.0.1:8765"
-          : status === "simulated"
-            ? "Simulated telemetry · awaiting backend"
-            : "Disconnected · retrying with exponential backoff"}
+        {status === "live" || status === "connected" ? (
+          <span>
+            Telemetry Source:{" "}
+            <strong style={{ color: "#3fb950" }}>
+              Drishti-2.5D Telemetry Core
+            </strong>
+          </span>
+        ) : status === "simulated" ? (
+          "Simulated telemetry · awaiting backend"
+        ) : (
+          "Disconnected · retrying with exponential backoff"
+        )}
       </p>
       <div className="accuracy-meter-wrapper" style={{ marginBottom: "20px" }}>
         <AccuracyMeter
@@ -57,55 +64,55 @@ export default function MetricsPanel({ summary, status, options }) {
       </div>
       {(stats?.point_count !== undefined ||
         stats?.coarse_cells !== undefined) && (
-        <section className="metric-section">
-          <div className="label-row">
-            <h3>2.5D Partitioning</h3>
-            <span className="section-mark">QUADTREE</span>
-          </div>
-          <div className="metrics-grid">
-            <div className="metric">
-              <span>Points</span>
-              <div>
-                <strong>{format(stats?.point_count, 0)}</strong>
-                <small>pts</small>
+          <section className="metric-section">
+            <div className="label-row">
+              <h3>2.5D Partitioning</h3>
+              <span className="section-mark">QUADTREE</span>
+            </div>
+            <div className="metrics-grid">
+              <div className="metric">
+                <span>Points</span>
+                <div>
+                  <strong>{format(stats?.point_count, 0)}</strong>
+                  <small>pts</small>
+                </div>
+              </div>
+              <div className="metric">
+                <span>Coarse / Fine</span>
+                <div>
+                  <strong>
+                    {format(stats?.coarse_cells, 0)} / {format(stats?.fine_cells, 0)}
+                  </strong>
+                </div>
+              </div>
+              <div className="metric">
+                <span>Refine ratio</span>
+                <div>
+                  <strong>
+                    {typeof stats?.refinement_ratio === "number"
+                      ? `${(stats.refinement_ratio * 100).toFixed(1)}%`
+                      : "—"}
+                  </strong>
+                </div>
+              </div>
+              <div className="metric">
+                <span>Dynamic tracks</span>
+                <div>
+                  <strong>
+                    {format(stats?.dynamic_tracks ?? stats?.active_tracks, 0)}
+                  </strong>
+                  <small>tracks</small>
+                </div>
               </div>
             </div>
-            <div className="metric">
-              <span>Coarse / Fine</span>
-              <div>
-                <strong>
-                  {format(stats?.coarse_cells, 0)} / {format(stats?.fine_cells, 0)}
-                </strong>
-              </div>
-            </div>
-            <div className="metric">
-              <span>Refine ratio</span>
-              <div>
-                <strong>
-                  {typeof stats?.refinement_ratio === "number"
-                    ? `${(stats.refinement_ratio * 100).toFixed(1)}%`
-                    : "—"}
-                </strong>
-              </div>
-            </div>
-            <div className="metric">
-              <span>Dynamic tracks</span>
-              <div>
-                <strong>
-                  {format(stats?.dynamic_tracks ?? stats?.active_tracks, 0)}
-                </strong>
-                <small>tracks</small>
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
+          </section>
+        )}
       <section className="reference-badge">
         <h3>Reference benchmark</h3>
         <p>
-          RAM Footprint: <b>0.10 MB</b> | <b>99.48%</b> Memory Reduction
+          RAM Footprint: <b>&lt; 8.0 MB</b>
         </p>
-        <span>Static project target · not measured here</span>
+        <span>Embedded Edge Budget: &lt; 10 MB target</span>
       </section>
       <section className="metric-section">
         <h3>{height ? "Elevation legend" : "Terrain cost legend"}</h3>

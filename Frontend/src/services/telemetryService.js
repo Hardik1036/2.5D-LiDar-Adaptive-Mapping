@@ -486,7 +486,7 @@ export function connectWebSocket() {
   }
 
   ws.onopen = () => {
-    console.log("[Telemetry] Connected to WebSocket at " + targetUrl);
+    console.log("[Telemetry] Connected to Drishti WebSocket telemetry stream");
     reconnectDelay = INITIAL_RECONNECT_DELAY; // Reset backoff on success
   };
 
