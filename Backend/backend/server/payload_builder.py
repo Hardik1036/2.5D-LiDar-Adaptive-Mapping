@@ -112,12 +112,12 @@ class PayloadBuilder:
 
     def __init__(
         self,
-        max_cells: int = 1500,
+        max_cells: int = 4000,
         alpha_ema: float = 0.15,
         max_raw_points: int = 16000,
         round_decimals: Optional[int] = None,
     ):
-        self.max_cells = max_cells or getattr(SERVER, "MAX_PAYLOAD_CELLS", 1500)
+        self.max_cells = max_cells or getattr(SERVER, "MAX_PAYLOAD_CELLS", 4000)
         self.max_raw_points = max_raw_points
         self.round_decimals = round_decimals
         self.alpha_ema = alpha_ema

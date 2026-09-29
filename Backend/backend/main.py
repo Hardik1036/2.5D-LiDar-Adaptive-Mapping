@@ -217,7 +217,7 @@ class PerceptionPipeline:
 
         # Server & Streaming
         self.server = TelemetryWebSocketServer(host=host, port=port)
-        self.payload_builder = PayloadBuilder(max_raw_points=5000, round_decimals=2)
+        self.payload_builder = PayloadBuilder(max_cells=4000, max_raw_points=5000, round_decimals=2)
         self.telemetry_db = AsyncTelemetryDB()
 
         # Dataset loader & dynamic sequence routing
@@ -412,8 +412,8 @@ class PerceptionPipeline:
             np.isfinite(x) & np.isfinite(y) & np.isfinite(z)
         )
         clean_points = raw_points[valid_mask]
-        # Fast vectorized downsample for dense sweeps (> 30,000 points) to cap cycle under 120ms
-        if len(clean_points) > 30000:
+        # Fast vectorized downsample for ultra-dense sweeps (> 65,000 points) to cap cycle under 120ms
+        if len(clean_points) > 65000:
             clean_points = clean_points[::2]
         t_ingest = (time.perf_counter() - t_ingest_start) * 1000.0
 

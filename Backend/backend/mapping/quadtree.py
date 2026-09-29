@@ -634,9 +634,16 @@ class AdaptiveQuadtree:
         if not np.any(ground_2d):
             return target_leaves
 
-        # Single-pass forward laser ring divergence closing (5x11 kernel: ±2 Y cells, ±5 X cells)
-        structure = np.ones((5, 11), dtype=bool)
-        closed_ground = ndi.binary_closing(ground_2d, structure=structure)
+        # Morphological closing:
+        # 1. Isotropic 3x3 structuring element (radial 0.4m - 0.6m) bridging annular LiDAR beam gaps (0 to 25m)
+        structure_3x3 = np.ones((3, 3), dtype=bool)
+        closed_3x3 = ndi.binary_closing(ground_2d, structure=structure_3x3)
+
+        # 2. Forward corridor closing (5x11 kernel: ±2 Y cells, ±5 X cells) bridging longitudinal laser divergence
+        structure_fwd = np.ones((5, 11), dtype=bool)
+        closed_fwd = ndi.binary_closing(ground_2d, structure=structure_fwd)
+
+        closed_ground = closed_3x3 | closed_fwd
         bridged = closed_ground & (~active_2d)
 
         if not np.any(bridged):
@@ -683,41 +690,73 @@ class AdaptiveQuadtree:
 
             if wx <= wy and wx < 999:
                 z_a, z_b = float(z_left_x[gy, gx]), float(z_right_x[gy, gx])
-                dz = float(dz_x[gy, gx])
+                dz_1d = float(dz_x[gy, gx])
             elif wy < 999:
                 z_a, z_b = float(z_down_y[gy, gx]), float(z_up_y[gy, gx])
-                dz = float(dz_y[gy, gx])
+                dz_1d = float(dz_y[gy, gx])
             else:
                 z_a, z_b = -1.60, -1.60
-                dz = 0.0
+                dz_1d = 0.0
 
             raw_mz = float(smooth_z[gy, gx])
             mz = raw_mz
             if mz < -2.1 or mz > -1.35:
                 mz = -1.60
 
-            # Step drop / negative obstacle check:
-            # - Elevation delta between gap boundaries > 0.15m (curb or trench lip)
+            # Surrounding valid ground neighbor inspection in 3x3 window (radial 0.4m - 0.6m)
+            y0 = max(0, gy - 1)
+            y1 = min(ny, gy + 2)
+            x0 = max(0, gx - 1)
+            x1 = min(nx, gx + 2)
+            nbr_mask = ground_2d[y0:y1, x0:x1]
+            nbr_z = mean_z_2d[y0:y1, x0:x1][nbr_mask]
+
+            if len(nbr_z) >= 2:
+                local_dz = float(np.ptp(nbr_z))
+                min_nbr_z = float(np.min(nbr_z))
+                effective_dz = local_dz
+            else:
+                local_dz = dz_1d
+                min_nbr_z = min(z_a, z_b)
+                effective_dz = dz_1d
+
+            # Negative hazard check (pothole / ditch):
+            # - Neighbor elevation drop >= 0.20m (or boundary drop > 0.15m in narrow gap)
             # - Or boundary elevation drops below road baseline (Z < -2.0m)
             # - Or interpolated elevation is substantially depressed (Z < -2.0m)
-            is_step_drop = (dz > 0.15) or (min(z_a, z_b) < -2.0) or (raw_mz < -2.0)
+            is_negative_hazard = (
+                (effective_dz >= 0.20) or
+                (dz_1d > 0.15 and w <= 2) or
+                (min_nbr_z < -2.0) or
+                (raw_mz < -2.0)
+            )
 
-            if is_step_drop:
+            if is_negative_hazard:
                 # 3. LETHAL NEGATIVE OBSTACLE (Cost = 255): Impassable ditch/pothole
                 cell_cost = 255
-                stat_dz = max(0.20, dz)
-            elif w <= 2 and dz <= 0.06:
-                # 1. SAFE ROAD (Cost = 0): Narrow gap (<= 2 cells / <= 1.0m) & strict planar matching (<= 0.06m)
+                stat_dz = max(0.20, effective_dz)
+            elif w > 4 and len(nbr_z) < 2:
+                # 4. UNCONFIRMED WIDE GAPS (> 4 cells / > 2.0m) without immediate neighbors:
+                # Left unfilled to prevent navigating through unscanned voids.
+                continue
+            elif w > 2:
+                # 2. CAUTION TILE (Yellow / Cost = 100): Medium gap (3-4 cells)
+                cell_cost = 100
+                stat_dz = max(0.08, effective_dz)
+            elif effective_dz <= 0.06:
+                # 1. SAFE ROAD (Green / Cost = 0): Narrow gap & strict planar matching
                 cell_cost = 0
                 stat_dz = 0.02
-            elif w <= 4:
-                # 2. CAUTION / POTENTIAL VOID (Cost = 100): Medium gap (3-4 cells) or slope variation (dz > 0.06m)
+            elif effective_dz < 0.15:
+                # Slight slope variation: Caution
                 cell_cost = 100
-                stat_dz = max(0.08, dz)
+                stat_dz = max(0.08, effective_dz)
+            elif effective_dz < 0.20:
+                cell_cost = 100
+                stat_dz = max(0.15, effective_dz)
             else:
-                # Wide gap (> 4 cells / > 2.0m) without step drop: do NOT fill as green!
-                # Leave unfilled to prevent rover from navigating blindly through unscanned voids.
-                continue
+                cell_cost = 255
+                stat_dz = max(0.20, effective_dz)
 
             node_cx = float(x_min + (gx + 0.5) * self.coarse_res)
             node_cy = float(y_min + (gy + 0.5) * self.coarse_res)
