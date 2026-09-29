@@ -43,7 +43,7 @@ import time
 from typing import Any, Dict, List, Optional, Union
 
 try:
-    import psutil
+    import psutil  # type: ignore
 except ImportError:
     psutil = None
 
@@ -581,7 +581,7 @@ class PerceptionPipeline:
         quadtree_ram_mb = tree_stats.get("ram_mb", self.quadtree.get_memory_footprint_mb())
         ground_inlier_ratio = round(len(ground_pts) / max(len(clean_points), 1), 3)
 
-        system_stats = {
+        system_stats: Dict[str, Any] = {
             "fps": round(self.rolling_fps, 1),
             "latency_ms": round(self.rolling_latency_ms, 2),
             "system_status": health_info["system_status"],
@@ -672,13 +672,14 @@ class PerceptionPipeline:
                 f"Hazards: Thin={len(thin_hazards)}, Drop={len(dropoffs)}"
             )
             if self.profile_mode:
-                b = system_stats["breakdown_ms"]
-                status_line += (
-                    f"\n   [Profile Breakdown] Ingest: {b['ingest']}ms | Dust: {b['dust']}ms | "
-                    f"Seg: {b['seg']}ms | Thin: {b['thin']}ms | Quad: {b['quadtree']}ms | "
-                    f"Track: {b['track']}ms | Trench: {b['trench']}ms | Blend: {b['blend']}ms | "
-                    f"Cost: {b['costmap']}ms | ROS: {b['ros']}ms"
-                )
+                b = system_stats.get("breakdown_ms")
+                if isinstance(b, dict):
+                    status_line += (
+                        f"\n   [Profile Breakdown] Ingest: {b.get('ingest', 0)}ms | Dust: {b.get('dust', 0)}ms | "
+                        f"Seg: {b.get('seg', 0)}ms | Thin: {b.get('thin', 0)}ms | Quad: {b.get('quadtree', 0)}ms | "
+                        f"Track: {b.get('track', 0)}ms | Trench: {b.get('trench', 0)}ms | Blend: {b.get('blend', 0)}ms | "
+                        f"Cost: {b.get('costmap', 0)}ms | ROS: {b.get('ros', 0)}ms"
+                    )
             logger.info(status_line)
 
         return {
