@@ -15,8 +15,8 @@
     "three": "^0.185.1"
   },
   "devDependencies": {
-    "@rollup/rollup-win32-x64-msvc": "^4.63.5",
     "@vitejs/plugin-react": "^4.3.4",
     "vite": "^6.0.0"
   }
 }
+
