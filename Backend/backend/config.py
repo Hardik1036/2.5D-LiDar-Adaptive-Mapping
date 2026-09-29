@@ -14,22 +14,30 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 def _resolve_dataset_path(*relative_paths: str) -> Path:
     for rel in relative_paths:
         for candidate in [
-            Path(rel),
             BACKEND_DIR / rel,
-            BACKEND_DIR / "data" / "kaggle_cache" / rel,
+            BACKEND_DIR / "data" / rel,
+            Path(rel),
             BACKEND_DIR.parent / rel,
+            Path("/app") / rel,
+            Path("/app/Backend") / rel,
+            Path("/app/data") / rel,
         ]:
-            if candidate.exists():
+            if candidate.exists() and (candidate.is_dir() or any(candidate.glob("*.bin"))):
                 return candidate
-    return BACKEND_DIR / relative_paths[0]
+    return BACKEND_DIR / "data" / relative_paths[0]
 
 KITTI_DYNAMIC_DIR = _resolve_dataset_path(
-    "data/kitti_dynamic/training/velodyne",
-    "data/kitti_clean/training/velodyne"
+    "data/dynamic_corridor/velodyne",
+    "dynamic_corridor/velodyne",
+    "data/sweeps",
 )
-KITTI_CLEAN_DIR = _resolve_dataset_path("data/kitti_clean/training/velodyne")
+KITTI_CLEAN_DIR = _resolve_dataset_path(
+    "data/static_corridor/velodyne",
+    "static_corridor/velodyne",
+    "data/sweeps",
+)
 
-DEFAULT_DATASET_DIR = KITTI_DYNAMIC_DIR if KITTI_DYNAMIC_DIR.exists() else KITTI_CLEAN_DIR
+DEFAULT_DATASET_DIR = KITTI_DYNAMIC_DIR if (KITTI_DYNAMIC_DIR.exists() and any(KITTI_DYNAMIC_DIR.glob("*.bin"))) else KITTI_CLEAN_DIR
 DATASET_DIR = DEFAULT_DATASET_DIR
 
 

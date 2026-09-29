@@ -12,20 +12,21 @@ from backend.main import PerceptionPipeline
 
 def test_dataset_loader_initialization_and_hot_swap():
     loader = DatasetLoader()
-    assert len(loader.files) == 0
+    # Loader automatically resolves candidate paths and loads bundled sweeps
+    assert len(loader.files) > 0
 
-    # Test non-existent path
+    # Test non-existent path properly fails
     assert not loader.set_directory("data/non_existent_dir_12345")
 
-    # Test loading clean dataset
-    clean_path = Path("data/kaggle_cache/data/kitti_clean/training/velodyne")
-    if not clean_path.exists():
-        clean_path = Path(__file__).resolve().parent.parent.parent / "data" / "kaggle_cache" / "data" / "kitti_clean" / "training" / "velodyne"
+    # Test loading bundled static corridor
+    static_path = Path("Backend/data/static_corridor/velodyne")
+    if not static_path.exists():
+        static_path = Path(__file__).resolve().parent.parent.parent / "data" / "static_corridor" / "velodyne"
 
-    if clean_path.exists():
-        success = loader.set_directory(str(clean_path))
+    if static_path.exists():
+        success = loader.set_directory(str(static_path))
         assert success
-        assert len(loader.files) > 0
+        assert len(loader.files) == 50
         assert loader.current_index == 0
 
         # Read sweep
@@ -37,11 +38,11 @@ def test_dataset_loader_initialization_and_hot_swap():
         assert loader.current_index == 1
 
         # Hot-swap to dynamic dataset
-        dyn_path = clean_path.parent.parent.parent / "kitti_dynamic" / "training" / "velodyne"
+        dyn_path = static_path.parent.parent / "dynamic_corridor" / "velodyne"
         if dyn_path.exists():
             success_dyn = loader.set_directory(str(dyn_path))
             assert success_dyn
-            assert len(loader.files) > 0
+            assert len(loader.files) == 70
             assert loader.current_index == 0
             pts_dyn = loader.get_next_sweep()
             assert pts_dyn is not None
