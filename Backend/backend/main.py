@@ -71,7 +71,6 @@ from backend.ingestion.dust_filter import StatisticalDustFilter
 from backend.ingestion.ground_segmentation import GroundSegmenter
 from backend.ingestion.thin_hazard_detector import ThinHazardDetector
 from backend.ingestion.dataset_loader import DatasetLoader
-from backend.ingestion.kaggle_streamer import KaggleStreamer, KaggleDatasetStreamer
 from backend.mapping.costmap import CostmapEvaluator
 from backend.mapping.degraded_mode import SensorHealthMonitor
 from backend.mapping.negative_obstacles import TrenchDetector
@@ -948,19 +947,9 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Step B: Initialize KaggleStreamer on startup and set active directory for DatasetLoader
-    streamer = KaggleStreamer(
-        dataset_name=args.kaggle_dataset or os.environ.get("KAGGLE_DATASET") or "hardiknopany/drishti-2-5d-dataset"
-    )
-    cache_path = streamer.sync_dataset()
-
-    # Search for the directory holding the downloaded .bin files
-    bin_files = list(Path(cache_path).rglob("*.bin"))
-    if bin_files:
-        active_data_dir = str(bin_files[0].parent)
-        logger.info(f"[Main] Pointing DatasetLoader to Kaggle dataset directory: {active_data_dir}")
-    else:
-        active_data_dir = cache_path
+    # Initialize dataset loader directly from the bundled local files (zero network overhead, zero RAM spikes)
+    data_loader = DatasetLoader(mode="dynamic")
+    logger.info(f"[Main] Bundled sweep loader ready with {len(data_loader)} frames ({data_loader.data_dir})")
 
     pipeline = PerceptionPipeline(
         host=args.host,
@@ -969,7 +958,7 @@ def main():
         use_redis=args.use_redis,
         ros_output=args.ros_output,
         profile_mode=args.profile,
-        dataset_dir=active_data_dir if bin_files else args.dataset_dir,
+        dataset_dir=data_loader.data_dir if data_loader.data_dir else args.dataset_dir,
         kaggle=args.kaggle,
         kaggle_dataset=args.kaggle_dataset,
     )
