@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 
-from backend.ingestion.kaggle_streamer import KaggleDatasetStreamer
+from backend.ingestion.kaggle_streamer import KaggleDatasetStreamer, KaggleStreamer, DEFAULT_DATASET
 from backend.main import PerceptionPipeline
 
 
@@ -302,4 +302,34 @@ def test_render_health_check_http_response():
             await server.stop()
 
     asyncio.run(_run())
+
+
+def test_kaggle_streamer_default_and_sync(tmp_path, monkeypatch):
+    """Verify KaggleStreamer defaults to hardiknopany/drishti-2-5d-dataset and handles sync."""
+    monkeypatch.delenv("KAGGLE_DATASET", raising=False)
+    streamer = KaggleStreamer(cache_dir=str(tmp_path))
+    assert streamer.dataset_name == "hardiknopany/drishti-2-5d-dataset"
+
+    # Pre-populate a .bin file to test cache hit
+    mock_bin = tmp_path / "000000.bin"
+    mock_bin.write_bytes(b"\x00" * 16)
+    result_path = streamer.sync_dataset()
+    assert result_path == str(tmp_path)
+
+
+def test_kaggle_streamer_sync_download(tmp_path, monkeypatch):
+    """Verify KaggleStreamer downloads dataset when cache is empty."""
+    monkeypatch.setenv("KAGGLE_USERNAME", "mock_user")
+    monkeypatch.setenv("KAGGLE_KEY", "mock_key")
+
+    mock_api = MagicMock()
+    with patch("kaggle.api.kaggle_api_extended.KaggleApi", return_value=mock_api):
+        streamer = KaggleStreamer(dataset_name="hardiknopany/drishti-2-5d-dataset", cache_dir=str(tmp_path))
+        result_path = streamer.sync_dataset()
+        assert result_path == str(tmp_path)
+        mock_api.authenticate.assert_called_once()
+        mock_api.dataset_download_files.assert_called_once_with(
+            "hardiknopany/drishti-2-5d-dataset", path=str(tmp_path), unzip=True
+        )
+
 

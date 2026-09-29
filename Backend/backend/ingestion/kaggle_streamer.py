@@ -4,30 +4,85 @@ Streams point cloud sweeps directly from Kaggle into in-memory float32 buffers.
 """
 
 import os
+import logging
 from pathlib import Path
 import time
 from typing import Any, Dict, Generator, List, Optional, Tuple
 import numpy as np
 
+logger = logging.getLogger("KaggleStreamer")
+DEFAULT_DATASET = "hardiknopany/drishti-2-5d-dataset"
+
 try:
     from kaggle.api.kaggle_api_extended import KaggleApi
 except ImportError:
-    import subprocess
+    try:
+        import subprocess
+        subprocess.check_call(["pip", "install", "kaggle", "kagglehub"])
+        from kaggle.api.kaggle_api_extended import KaggleApi
+    except Exception:
+        KaggleApi = None
 
-    subprocess.check_call(["pip", "install", "kaggle", "kagglehub"])
-    from kaggle.api.kaggle_api_extended import KaggleApi
+
+class KaggleStreamer:
+    """
+    Kaggle dataset synchronization and cache manager for DRISHTI-2.5D.
+    Authenticates and downloads point cloud datasets from Kaggle to local disk.
+    """
+
+    def __init__(self, dataset_name: Optional[str] = None, cache_dir: str = "data/kaggle_cache"):
+        self.dataset_name = (
+            dataset_name or os.environ.get("KAGGLE_DATASET") or DEFAULT_DATASET
+        )
+        resolved_cache = Path(cache_dir)
+        if not resolved_cache.is_absolute() and not resolved_cache.exists():
+            pkg_cache = Path(__file__).resolve().parent.parent.parent / cache_dir
+            if pkg_cache.exists():
+                resolved_cache = pkg_cache
+        self.cache_dir = resolved_cache
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def sync_dataset(self) -> str:
+        """
+        Authenticates via Kaggle API and downloads the point cloud dataset if the local cache directory does not contain .bin or point cloud files.
+        """
+        existing_bins = list(self.cache_dir.rglob("*.bin"))
+        if existing_bins:
+            logger.info(f"[KaggleStreamer] Found {len(existing_bins)} point clouds in {self.cache_dir}. Skipping download.")
+            return str(self.cache_dir)
+
+        username = os.environ.get("KAGGLE_USERNAME")
+        key = os.environ.get("KAGGLE_KEY")
+        if not username or not key:
+            kaggle_json = Path.home() / ".kaggle" / "kaggle.json"
+            if not kaggle_json.exists():
+                logger.warning("[KaggleStreamer] KAGGLE_USERNAME or KAGGLE_KEY not found in environment.")
+                return str(self.cache_dir)
+
+        try:
+            from kaggle.api.kaggle_api_extended import KaggleApi
+            api = KaggleApi()
+            api.authenticate()
+            logger.info(f"[KaggleStreamer] Authenticated. Downloading {self.dataset_name} to {self.cache_dir}...")
+            api.dataset_download_files(self.dataset_name, path=str(self.cache_dir), unzip=True)
+            logger.info(f"[KaggleStreamer] Successfully extracted {self.dataset_name} to {self.cache_dir}")
+        except Exception as e:
+            logger.error(f"[KaggleStreamer] Failed to download dataset: {e}")
+        return str(self.cache_dir)
 
 
 class KaggleDatasetStreamer:
 
     def __init__(
         self,
-        dataset_slug: str = "hardiknopany1036/drishti-2-5d-dataset",
+        dataset_slug: Optional[str] = None,
         cache_dir: str = "data/kaggle_cache",
         loop: bool = True,
         api: Optional[Any] = None,
     ):
-        self.dataset_slug = dataset_slug
+        self.dataset_slug = (
+            dataset_slug or os.environ.get("KAGGLE_DATASET") or DEFAULT_DATASET
+        )
         # Resolve cache_dir relative to CWD or backend directory
         resolved_cache = Path(cache_dir)
         if not resolved_cache.is_absolute() and not resolved_cache.exists():
@@ -37,7 +92,7 @@ class KaggleDatasetStreamer:
         self.cache_dir = resolved_cache
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.loop = loop
-        self.api = api if api is not None else KaggleApi()
+        self.api = api if api is not None else (KaggleApi() if KaggleApi is not None else None)
 
         # Ensure environment variables from .env take effect if not already present in os.environ
         try:
@@ -58,7 +113,8 @@ class KaggleDatasetStreamer:
 
         # Authenticate via environment variables or ~/.kaggle/kaggle.json
         try:
-            self.api.authenticate()
+            if self.api is not None:
+                self.api.authenticate()
         except Exception as e:
             raise RuntimeError(
                 f"[KaggleStreamer] Kaggle authentication failed: {e}. "
@@ -82,9 +138,10 @@ class KaggleDatasetStreamer:
             f"[KaggleStreamer] Cache empty. Downloading dataset '{self.dataset_slug}'..."
         )
         try:
-            self.api.dataset_download_files(
-                self.dataset_slug, path=str(self.cache_dir), unzip=True, quiet=False
-            )
+            if self.api is not None:
+                self.api.dataset_download_files(
+                    self.dataset_slug, path=str(self.cache_dir), unzip=True, quiet=False
+                )
         except Exception as e:
             # Fallback for alias naming differences (drishti-2-5d-dataset <-> drishti-2-5d-data)
             fallback_slug = None
@@ -93,7 +150,7 @@ class KaggleDatasetStreamer:
             elif self.dataset_slug.endswith("drishti-2-5d-data"):
                 fallback_slug = self.dataset_slug.replace("drishti-2-5d-data", "drishti-2-5d-dataset")
 
-            if fallback_slug:
+            if fallback_slug and self.api is not None:
                 try:
                     print(f"[KaggleStreamer] Retrying with alias dataset '{fallback_slug}'...")
                     self.api.dataset_download_files(
@@ -169,4 +226,3 @@ class KaggleDatasetStreamer:
             self.sweep_files = new_files
             return True
         return False
-

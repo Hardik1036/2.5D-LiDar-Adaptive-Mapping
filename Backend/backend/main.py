@@ -71,6 +71,7 @@ from backend.ingestion.dust_filter import StatisticalDustFilter
 from backend.ingestion.ground_segmentation import GroundSegmenter
 from backend.ingestion.thin_hazard_detector import ThinHazardDetector
 from backend.ingestion.dataset_loader import DatasetLoader
+from backend.ingestion.kaggle_streamer import KaggleStreamer, KaggleDatasetStreamer
 from backend.mapping.costmap import CostmapEvaluator
 from backend.mapping.degraded_mode import SensorHealthMonitor
 from backend.mapping.negative_obstacles import TrenchDetector
@@ -164,7 +165,7 @@ class PerceptionPipeline:
         profile_mode: bool = False,
         dataset_dir: Optional[Union[str, Path]] = None,
         kaggle: bool = False,
-        kaggle_dataset: Optional[str] = "hardiknopany1036/drishti-2-5d-dataset",
+        kaggle_dataset: Optional[str] = "hardiknopany/drishti-2-5d-dataset",
         kaggle_streamer: Optional[Any] = None,
         **kwargs,
     ):
@@ -175,7 +176,9 @@ class PerceptionPipeline:
         self.ros_output = ros_output
         self.profile_mode = profile_mode
         self.kaggle = kaggle or (kaggle_streamer is not None)
-        self.kaggle_dataset = kaggle_dataset or "hardiknopany1036/drishti-2-5d-dataset"
+        self.kaggle_dataset = (
+            kaggle_dataset or os.environ.get("KAGGLE_DATASET") or "hardiknopany/drishti-2-5d-dataset"
+        )
         self.kaggle_streamer = kaggle_streamer
         ds_path = Path(dataset_dir) if dataset_dir is not None else DEFAULT_DATASET_DIR
         # Ensure path points strictly to the full sweeps in training/velodyne, never parent or gt_database
@@ -934,7 +937,7 @@ def parse_args():
     parser.add_argument(
         "--kaggle-dataset",
         type=str,
-        default="hardiknopany1036/drishti-2-5d-dataset",
+        default=os.environ.get("KAGGLE_DATASET", "hardiknopany/drishti-2-5d-dataset"),
         help="Kaggle dataset slug (<owner>/<dataset-name>)",
     )
     return parser.parse_args()
@@ -943,6 +946,20 @@ def parse_args():
 def main():
     args = parse_args()
 
+    # Step B: Initialize KaggleStreamer on startup and set active directory for DatasetLoader
+    streamer = KaggleStreamer(
+        dataset_name=args.kaggle_dataset or os.environ.get("KAGGLE_DATASET") or "hardiknopany/drishti-2-5d-dataset"
+    )
+    cache_path = streamer.sync_dataset()
+
+    # Search for the directory holding the downloaded .bin files
+    bin_files = list(Path(cache_path).rglob("*.bin"))
+    if bin_files:
+        active_data_dir = str(bin_files[0].parent)
+        logger.info(f"[Main] Pointing DatasetLoader to Kaggle dataset directory: {active_data_dir}")
+    else:
+        active_data_dir = cache_path
+
     pipeline = PerceptionPipeline(
         host=args.host,
         port=args.port,
@@ -950,7 +967,7 @@ def main():
         use_redis=args.use_redis,
         ros_output=args.ros_output,
         profile_mode=args.profile,
-        dataset_dir=args.dataset_dir,
+        dataset_dir=active_data_dir if bin_files else args.dataset_dir,
         kaggle=args.kaggle,
         kaggle_dataset=args.kaggle_dataset,
     )
