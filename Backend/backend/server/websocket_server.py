@@ -5,12 +5,71 @@ and automatic ping-pong heartbeats to keep proxy sockets alive 24/7.
 """
 
 import asyncio
+import http
 import logging
 import os
 from typing import Any, Optional, Set
 import json
 import websockets
 import websockets.exceptions
+
+# Lenient HTTP request parsing to support HEAD, GET, and OPTIONS for cloud health check probes (Render, Railway, etc.)
+try:
+    from websockets import http11
+    from websockets.http11 import parse_line, parse_headers, d
+
+    @classmethod
+    def _lenient_http11_parse(cls, read_line):
+        try:
+            request_line = yield from parse_line(read_line)
+        except EOFError as exc:
+            raise EOFError("connection closed while reading HTTP request line") from exc
+        try:
+            method, raw_path, protocol = request_line.split(b" ", 2)
+        except ValueError:
+            raise ValueError(f"invalid HTTP request line: {d(request_line)}") from None
+        if protocol != b"HTTP/1.1":
+            raise ValueError(f"unsupported protocol; expected HTTP/1.1: {d(request_line)}")
+        if method not in (b"GET", b"HEAD", b"OPTIONS"):
+            raise ValueError(f"unsupported HTTP method; expected GET or HEAD; got {d(method)}")
+        path = raw_path.decode("ascii", "surrogateescape")
+        headers = yield from parse_headers(read_line)
+        if "Transfer-Encoding" in headers:
+            raise NotImplementedError("transfer codings aren't supported")
+        if "Content-Length" in headers:
+            raise ValueError("unsupported request body")
+        req = cls(path, headers)
+        req.method = method.decode("ascii")
+        return req
+
+    http11.Request.parse = _lenient_http11_parse
+except Exception:
+    pass
+
+try:
+    from websockets.legacy import http as legacy_http
+    from websockets.legacy.http import read_line, read_headers, d
+
+    async def _lenient_legacy_read_request(stream):
+        try:
+            request_line = await read_line(stream)
+        except EOFError as exc:
+            raise EOFError("connection closed while reading HTTP request line") from exc
+        try:
+            method, raw_path, version = request_line.split(b" ", 2)
+        except ValueError:
+            raise ValueError(f"invalid HTTP request line: {d(request_line)}") from None
+        if method not in (b"GET", b"HEAD", b"OPTIONS"):
+            raise ValueError(f"unsupported HTTP method: {d(method)}")
+        if version != b"HTTP/1.1":
+            raise ValueError(f"unsupported HTTP version: {d(version)}")
+        path = raw_path.decode("ascii", "surrogateescape")
+        headers = await read_headers(stream)
+        return path, headers
+
+    legacy_http.read_request = _lenient_legacy_read_request
+except Exception:
+    pass
 
 try:
     import orjson
@@ -21,6 +80,34 @@ except ImportError:
 from backend.config import CONFIG, SERVER
 
 logger = logging.getLogger("TelemetryServer")
+
+
+async def process_http_request(*args, **kwargs):
+    """
+    Intercepts non-WebSocket HTTP pings (e.g., Render / cloud health checkers).
+    Returns 200 OK for HEAD/GET requests while passing WebSocket upgrade requests through.
+    Supports both modern websockets (ServerConnection, Request) and legacy (path, request_headers).
+    """
+    if len(args) == 2:
+        arg0, arg1 = args
+        # Modern websockets (ServerConnection, Request)
+        if hasattr(arg0, "respond"):
+            headers = getattr(arg1, "headers", {})
+            if headers.get("Upgrade", "").lower() != "websocket":
+                return arg0.respond(200, "OK\nDRISHTI-2.5D Perception Engine Online\n")
+            return None
+
+        # Legacy websockets (path, request_headers)
+        headers = arg1
+        if isinstance(headers, dict) or hasattr(headers, "get"):
+            if "Upgrade" in headers and headers.get("Upgrade", "").lower() == "websocket":
+                return None
+            return (
+                http.HTTPStatus.OK,
+                [("Content-Type", "text/plain; charset=utf-8"), ("Connection", "close")],
+                b"OK\nDRISHTI-2.5D Perception Engine Online\n",
+            )
+    return None
 
 
 class TelemetryWebSocketServer:
@@ -85,32 +172,7 @@ class TelemetryWebSocketServer:
             self.connected_clients.discard(websocket)
             logger.info(f"Client disconnected from {remote}. Remaining clients: {len(self.connected_clients)}")
 
-    @staticmethod
-    def _process_request(*args, **kwargs):
-        """
-        Intercepts standard HTTP GET requests (such as Render/Cloud health-checks)
-        and responds with HTTP 200 OK, while allowing WebSocket upgrades through.
-        Compatible with both websockets v14+ (connection, request) and legacy (path, request_headers).
-        """
-        if len(args) == 2:
-            arg0, arg1 = args
-            # Modern websockets (ServerConnection, Request)
-            if hasattr(arg0, "respond"):
-                headers = getattr(arg1, "headers", {})
-                if headers.get("Upgrade", "").lower() != "websocket":
-                    return arg0.respond(200, "DRISHTI-2.5D Perception Engine Online\n")
-                return None
-            # Legacy websockets (path, request_headers)
-            headers = arg1
-            if isinstance(headers, dict) or hasattr(headers, "get"):
-                if headers.get("Upgrade", "").lower() != "websocket":
-                    return (
-                        200,
-                        [("Content-Type", "text/plain; charset=utf-8"), ("Connection", "close")],
-                        b"DRISHTI-2.5D Perception Engine Online\n",
-                    )
-        return None
-
+    _process_request = staticmethod(process_http_request)
     handler = _handler
 
     async def start(self):
@@ -134,10 +196,10 @@ class TelemetryWebSocketServer:
             ping_interval=getattr(self, "ping_interval", 10),               # Keep alive heartbeat every 10s
             ping_timeout=getattr(self, "ping_timeout", 30),                 # Reconnect drop window
             origins=origins,
-            process_request=self._process_request,
+            process_request=process_http_request,
         )
         self._is_running = True
-        logger.info(f"[WebSocketServer] Listening on ws://{host}:{port} (Max Buffer: 10MB)")
+        logger.info(f"[WebSocketServer] Listening on ws://{host}:{port} with HTTP probe handling (Max Buffer: 10MB)")
 
     async def broadcast(self, message: Any):
         """

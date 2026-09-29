@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-# DRISHTI-2.5D: Real-Time Adaptive LiDAR Perception & Semantic Hazard Intelligence
+# DRISHTI-2.5D: Dynamic Real-Time Ingetion & Semantic Hazard Intelligence
 
 ### Tactical Elevation Mapping, Negative Obstacle Gating, and Dual-Mode Semantic Defense Visualization
 
@@ -23,7 +23,7 @@
 
 ## Executive Overview & Mission Statement
 
-Operating in unstructured, GPS-denied tactical theaters demands rapid distinction between traversable asphalt, airborne particulate noise, low-relief threats (such as spike strips and debris), and lethal negative obstacles (trenches and drop-offs). DRISHTI-2.5D resolves the classical tradeoff between dense 3D point cloud computational overhead and 2D grid over-simplification through a hybrid **2.5D Adaptive Variable-Resolution Quadtree**. 
+Operating in unstructured, GPS-denied tactical theaters demands rapid distinction between traversable asphalt, airborne particulate noise, low-relief threats (such as spike strips and debris), and lethal negative obstacles (trenches and drop-offs). DRISHTI-2.5D resolves the classical tradeoff between dense 3D point cloud computational overhead and 2D grid over-simplification through a hybrid **2.5D Adaptive Variable-Resolution Quadtree**.
 
 The system harmonizes geometric terrain statistics with semantic intelligence, enforcing strict ground-plane clearance gating to eliminate false obstacle inflation while rendering a 3-tier defense-grade visual corridor in real-time WebGL.
 
@@ -32,36 +32,47 @@ The system harmonizes geometric terrain statistics with semantic intelligence, e
 ## Core Capabilities & Architectural Pillars
 
 ### 1. Corridor Geometry & Spatial Bounds Hardening
+
 To eliminate unbounded point processing while safeguarding vehicle trajectory margins, the perception pipeline enforces a deterministic spatial bounding envelope:
+
 - **Forward Navigation Corridor:** $-20.0\text{ m} \le X \le +50.0\text{ m}$ (protecting full braking distance at speed).
 - **Lateral Corridor:** $-15.0\text{ m} \le Y \le +15.0\text{ m}$ (spanning multi-lane tactical roadways and shoulders).
 - **Vertical Altitude Band:** $-2.50\text{ m} \le Z \le +2.00\text{ m}$ (isolating ground, chassis floor, and overhead clearance).
 
 ### 2. Ground-Plane Asphalt Locking & Dust Rejection
+
 Raw point cloud returns within the drivable road envelope are subject to planar regression and variance analysis:
+
 - **Elevation Gating:** Road surfaces falling within $Z \in [-2.20\text{ m}, -1.25\text{ m}]$ with elevation variance $\Delta Z \le 0.18\text{ m}$ and maximum point height $Z_{\text{max}} \le -1.15\text{ m}$ are rigidly locked to traversable cost ($Cost = 0$).
 - **Statistical Dust Rejection:** Obstacle candidate nodes require a minimum point density ($\ge 3$ points per sub-cell) to trigger subdivision, rejecting airborne dust, vehicle exhaust scatter, and optical floaters.
 - **Dilation Protection:** Proximity cost dilation algorithms explicitly preserve the $Cost = 0$ state on confirmed planar ground, eliminating artificial "red carpet" false alarms across clear asphalt.
 
 ### 3. Dynamic Cost Parity Between Mode 2 & Mode 3
+
 Full synchronization between **Mode 2 (2.5D Adaptive Mapping)** and **Mode 3 (Semantic Hazard Intelligence)** ensures zero operational divergence:
+
 - Both modes enforce an identical ground-plane filter before telemetry transmission and WebGL rendering.
 - Drivable asphalt is locked to $Cost = 0$ in both geometric costmaps and semantic classification arrays, ensuring uniform safe corridor rendering across sensor abstractions.
 
 ### 4. High-Throughput Asynchronous Networking
+
 - **Async Thread Offloading:** Heavy point cloud operations (`pipeline.process_frame`) run non-blocking via `asyncio.to_thread`, preserving the responsiveness of the WebSocket server event loop.
 - **10 MB Payload Buffer:** The WebSocket broadcast layer is configured with `max_size = 10 * 1024 * 1024` bytes, accommodating dense multi-thousand cell quadtrees without frame drops or backpressure.
 - **Dead-Client Pruning:** Non-blocking socket dispatch with a $150\text{ ms}$ timeout (`asyncio.wait_for`) prunes disconnected or stalling HUD clients without degrading backend loop cadence.
 
 ### 5. Interactive Defense Colormap Visualization
+
 A custom Three.js WebGL visualizer presents an intuitive 3-tier military defense color contract:
+
 - **Emerald Green (`#238636`, Cost 0–50):** Safe Traversable Corridor. Rendered as flat $4\text{ cm}$ tiles with subtle $1.02\times$ XY seam overlap to form an unbroken, seamless road surface.
 - **Solar Amber (`#D29922`, Cost 51–180):** Caution Corridors, terrain transitions, and navigable negative step variations ($10\text{ cm}$ step height).
 - **Tactical Crimson (`#F85149`, Cost 181–255):** Lethal Obstacles, parked vehicles, masonry walls, and trenches ($20\text{ cm}$ raised step height).
 - **Ceiling Gate:** Any return exceeding vehicle chassis floor clearance ($Z > -1.15\text{ m}$) is strictly gated from rendering green, preventing overhead tree canopies or bridge undersides from masking physical obstacles.
 
 ### 6. Dynamic Dataset Routing & Hot-Swapping
+
 The pipeline features runtime WebSocket command routing for `{"action": "set_dataset", "mode": "static" | "dynamic"}`:
+
 - **Dynamic Sequence:** Auto-discovers and hot-swaps to continuous multi-object tracking sequences (`data/kaggle_cache/**/kitti_dynamic`).
 - **Static Sequence:** Instantly switches to clean urban baseline sweeps (`data/kitti_clean/**/velodyne`).
 - Hot-swapping executes seamlessly in memory without terminating the perception loop, dropping clients, or resetting Kalman tracker IDs.
@@ -144,6 +155,7 @@ Drishti-2.5D-LiDar-Adaptive-Mapping/
 ## Quickstart & Installation Guide
 
 ### Prerequisites
+
 - **Python**: Version `3.10`, `3.11`, or `3.13` (64-bit).
 - **Node.js**: Version `18.x` or `20.x` LTS.
 - **Operating System**: Windows 10/11, Ubuntu 22.04 LTS, or macOS.
@@ -173,6 +185,7 @@ Or run each service in its own terminal window:
 ### Method B: Manual CLI Setup
 
 #### 1. Backend Setup
+
 ```powershell
 cd Backend
 
@@ -186,9 +199,11 @@ pip install -r requirements.txt
 # Run perception pipeline
 python -m backend.main
 ```
+
 *The backend server will listen on `ws://127.0.0.1:8765`.*
 
 #### 2. Frontend Setup
+
 ```powershell
 cd Frontend
 
@@ -198,6 +213,7 @@ npm install
 # Start development server
 npm run dev
 ```
+
 *Open your browser and navigate to `http://localhost:5173/#live`.*
 
 ---
