@@ -112,12 +112,12 @@ class PayloadBuilder:
 
     def __init__(
         self,
-        max_cells: int = 4000,
+        max_cells: int = 10000,
         alpha_ema: float = 0.15,
         max_raw_points: int = 16000,
         round_decimals: Optional[int] = None,
     ):
-        self.max_cells = max_cells or getattr(SERVER, "MAX_PAYLOAD_CELLS", 4000)
+        self.max_cells = max_cells or getattr(SERVER, "MAX_PAYLOAD_CELLS", 10000)
         self.max_raw_points = max_raw_points
         self.round_decimals = round_decimals
         self.alpha_ema = alpha_ema
@@ -243,7 +243,7 @@ class PayloadBuilder:
         """
         Builds a ready-to-broadcast JSON string in < 0.3 ms using orjson.
         """
-        # 1. Process cells: increased transmission budget up to 4,500 visible cells
+        # 1. Process cells: increased transmission budget up to 10,000 visible cells
         active_leaves = leaves
         if len(active_leaves) <= self.max_cells:
             serialized_cells = [self._serialize_leaf(leaf) for leaf in active_leaves]

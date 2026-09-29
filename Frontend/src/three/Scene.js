@@ -233,7 +233,7 @@ export class LidarScene {
     this.rawPointCloud.visible = false;
     this.scene.add(this.rawPointCloud);
     this.points = this.rawPointCloud;
-    this.ensureCapacity(5000);
+    this.ensureCapacity(12000);
     this.buildPerception();
     this.reduced = window.matchMedia("(prefers-reduced-motion: reduce)");
     this.onLost = (e) => {
@@ -394,7 +394,7 @@ export class LidarScene {
   }
   ensureCapacity(n) {
     if (n <= this.capacity) return;
-    this.capacity = Math.max(5000, 2 ** Math.ceil(Math.log2(n)));
+    this.capacity = Math.max(12000, 2 ** Math.ceil(Math.log2(n)));
     if (this.tiles) {
       this.scene.remove(this.tiles);
       this.tiles.dispose();

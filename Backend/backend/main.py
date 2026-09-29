@@ -217,7 +217,7 @@ class PerceptionPipeline:
 
         # Server & Streaming
         self.server = TelemetryWebSocketServer(host=host, port=port)
-        self.payload_builder = PayloadBuilder(max_cells=4000, max_raw_points=5000, round_decimals=2)
+        self.payload_builder = PayloadBuilder(max_cells=10000, max_raw_points=5000, round_decimals=2)
         self.telemetry_db = AsyncTelemetryDB()
 
         # Dataset loader & dynamic sequence routing
