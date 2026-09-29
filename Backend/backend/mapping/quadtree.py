@@ -5,9 +5,9 @@ local elevation variance > tau_sigma or step height delta_z > tau_z.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import numpy as np
-import scipy.ndimage as ndi
+import scipy.ndimage as ndi  # type: ignore
 
 from backend.config import BOUNDS, QUADTREE
 from backend.mapping.cell_statistics import CellStats, compute_cell_statistics
@@ -78,7 +78,7 @@ class QuadtreeNode:
     @point_count.setter
     def point_count(self, val: int):
         if self.stats is not None:
-            self.stats.point_count = int(val)
+            self.stats.point_count = val
 
     @property
     def min_x(self) -> float:
@@ -103,7 +103,7 @@ class QuadtreeNode:
             "x": float(round(self.x, 2)),
             "y": float(round(self.y, 2)),
             "size": float(round(self.size, 3)),
-            "cost": int(self.cost),
+            "cost": self.cost,
         }
         if self.stats is not None:
             d["z_min"] = float(round(self.stats.z_min, 2))
