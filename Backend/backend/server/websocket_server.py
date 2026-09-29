@@ -82,31 +82,32 @@ from backend.config import CONFIG, SERVER
 logger = logging.getLogger("TelemetryServer")
 
 
-async def process_http_request(*args, **kwargs):
+def process_http_request(*args, **kwargs):
     """
-    Intercepts non-WebSocket HTTP pings (e.g., Render / cloud health checkers).
-    Returns 200 OK for HEAD/GET requests while passing WebSocket upgrade requests through.
-    Supports both modern websockets (ServerConnection, Request) and legacy (path, request_headers).
+    Handles Render / load-balancer health checks (HEAD/GET).
+    Compatible with:
+      - websockets < 13: process_request(path, headers)
+      - websockets >= 13: process_request(connection, request)
     """
-    if len(args) == 2:
-        arg0, arg1 = args
-        # Modern websockets (ServerConnection, Request)
-        if hasattr(arg0, "respond"):
-            headers = getattr(arg1, "headers", {})
-            if headers.get("Upgrade", "").lower() != "websocket":
-                return arg0.respond(200, "OK\nDRISHTI-2.5D Perception Engine Online\n")
+    # websockets >= 13.0: args is (connection, request)
+    if len(args) == 2 and hasattr(args[1], "headers"):
+        connection, request = args
+        # Allow normal WebSocket upgrade
+        if "Upgrade" in request.headers:
             return None
+        # Return 200 OK response using modern websockets response object
+        if hasattr(connection, "respond"):
+            return connection.respond(http.HTTPStatus.OK, "OK\nDRISHTI-2.5D Perception Engine Online\n")
+        return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
 
-        # Legacy websockets (path, request_headers)
-        headers = arg1
+    # websockets < 13.0: args is (path, headers)
+    if len(args) == 2:
+        path, headers = args
         if isinstance(headers, dict) or hasattr(headers, "get"):
-            if "Upgrade" in headers and headers.get("Upgrade", "").lower() == "websocket":
+            if "Upgrade" in headers:
                 return None
-            return (
-                http.HTTPStatus.OK,
-                [("Content-Type", "text/plain; charset=utf-8"), ("Connection", "close")],
-                b"OK\nDRISHTI-2.5D Perception Engine Online\n",
-            )
+            return (http.HTTPStatus.OK, [("Content-Type", "text/plain"), ("Content-Length", "42")], b"OK\nDRISHTI-2.5D Perception Engine Online\n")
+
     return None
 
 
