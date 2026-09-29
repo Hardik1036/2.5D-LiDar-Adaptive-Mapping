@@ -11,11 +11,8 @@ __pycache__
 .venv
 venv/
 *.md
-data/
-backend/data/
 kaggle_cache/
 kaggle_env/
-*.bin
 *.zip
 *.tar.gz
 *.tar

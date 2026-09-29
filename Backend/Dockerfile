@@ -14,8 +14,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend codebase
+# Copy backend codebase and bundled dataset sweeps
 COPY backend/ ./backend/
+COPY data/ ./data/
 
 # Document target port (dynamic at runtime)
 EXPOSE 8765

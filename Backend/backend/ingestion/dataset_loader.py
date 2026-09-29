@@ -120,10 +120,10 @@ class DatasetLoader:
         self.bin_files: List[Path] = []
         self.current_index: int = 0
 
-        active_mode = None
+        active_mode = "static"
         candidate_dir = None
 
-        if isinstance(mode_or_dir, str) and mode_or_dir.lower() in ("static", "dynamic"):
+        if isinstance(mode_or_dir, str) and mode_or_dir.lower() in ("static", "dynamic", "static_corridor", "dynamic_corridor"):
             active_mode = mode_or_dir.lower()
         elif mode_or_dir is not None:
             candidate_dir = mode_or_dir
@@ -131,16 +131,42 @@ class DatasetLoader:
         if mode is not None:
             active_mode = mode.lower()
 
-        self.sweep_dir = resolve_sweep_directory(preferred_mode=active_mode, candidate_dir=candidate_dir)
-        self.set_directory(str(self.sweep_dir))
-        self.data_dir = self.dataset_dir
+        self.mode = active_mode
+
+        # 1. Anchor to this file: Backend/backend/ingestion/dataset_loader.py
+        # .parent = ingestion, .parent.parent = backend, .parent.parent.parent = Backend (or /app in Docker)
+        BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+        # Resolve folder name (support both 'static' and 'static_corridor')
+        mode_folder = f"{self.mode}_corridor" if not str(self.mode).endswith("_corridor") else self.mode
+
+        # Primary container-safe data path
+        data_path = BASE_DIR / "data" / mode_folder / "velodyne"
+        if not data_path.exists() or not any(data_path.glob("*.bin")):
+            # Check direct mode name without _corridor
+            alt_path = BASE_DIR / "data" / self.mode / "velodyne"
+            if alt_path.exists() and any(alt_path.glob("*.bin")):
+                data_path = alt_path
+            else:
+                # Use resolve_sweep_directory across all fallback and Docker candidate paths
+                data_path = resolve_sweep_directory(preferred_mode=self.mode, candidate_dir=candidate_dir)
+
+        self.data_dir = data_path
+        self.dataset_dir = data_path
+        self.sweep_dir = data_path
+        self.files = sorted(list(self.data_dir.glob("*.bin"))) if self.data_dir.exists() else []
         self.bin_files = self.files
 
-        print(f"[DatasetLoader] TOTAL LOADED REAL SWEEPS: {len(self.files)}")
+        # 2. Add loud debugging so we can see the exact path in Railway logs
+        print(f"\n[DatasetLoader] BOOTSTRAP PATH RESOLUTION:")
+        print(f" -> Looking for sweeps in: {self.data_dir}")
+        print(f" -> Found {len(self.files)} .bin files.")
+
         if len(self.files) == 0:
-            print(f"[DatasetLoader] WARNING: Zero .bin files detected at {self.sweep_dir}! Check .gitignore and git status!")
+            print(f"[CRITICAL WARNING] FALLING BACK TO SYNTHETIC DATA!")
+            print(f" -> Verify that Railway's 'Root Directory' contains the 'data/' folder.")
         else:
-            logger.info(f"[DatasetLoader] Mode: '{active_mode or 'auto'}' | Loaded {len(self.bin_files)} frames from {self.data_dir}")
+            logger.info(f"[DatasetLoader] Mode: '{self.mode}' | Loaded {len(self.bin_files)} frames from {self.data_dir}")
 
     def set_directory(self, new_dir: str) -> bool:
         """
