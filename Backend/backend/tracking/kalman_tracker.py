@@ -74,14 +74,16 @@ class SingleObjectKalmanFilter:
     ):
         """Incorporate new 2D position measurement in < 0.001 ms."""
         # X dimension update
-        kx = self.px / (self.px + self.r_meas)
-        kvx = (self.pvx * self.dt) / (self.px + self.r_meas)
+        denom_x = self.px + self.r_meas
+        kx = self.px / denom_x if denom_x > 1e-6 else 0.0
+        kvx = (self.pvx * self.dt) / denom_x if denom_x > 1e-6 else 0.0
         rx = float(meas_x) - self.x
         self.x += kx * rx
 
         # Y dimension update
-        ky = self.py / (self.py + self.r_meas)
-        kvy = (self.pvy * self.dt) / (self.py + self.r_meas)
+        denom_y = self.py + self.r_meas
+        ky = self.py / denom_y if denom_y > 1e-6 else 0.0
+        kvy = (self.pvy * self.dt) / denom_y if denom_y > 1e-6 else 0.0
         ry = float(meas_y) - self.y
         self.y += ky * ry
 
@@ -380,8 +382,8 @@ class KalmanTracker:
         """Removes tracks that have exceeded max_age or covariance limits."""
         valid_tracks = []
         for track in self.tracks:
-            # Check age
-            if track.time_since_update <= self.max_age:
+            # Check age and cleanly drop tracks lingering in memory past max_coast_frames limit
+            if track.time_since_update <= self.max_age and track.time_since_update <= self.max_coast_frames:
                 # Check covariance trace to prevent divergence
                 cov_trace = float(np.trace(track.kf.P))
                 if cov_trace < TRACKING.MAX_COVARIANCE_TRACE:
