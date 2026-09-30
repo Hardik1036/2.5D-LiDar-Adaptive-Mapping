@@ -14,6 +14,7 @@ import {
   isLivePaused,
   stepLiveFrame,
   sendCommand,
+  setDatasetMode,
   telemetryService,
 } from "../services/telemetryService.js";
 const MODE_HINT = {
@@ -47,9 +48,7 @@ export default function SceneControls({
       clearTimeout(datasetDebounceTimer.current);
     }
     datasetDebounceTimer.current = setTimeout(() => {
-      if (typeof sendCommand === "function") {
-        sendCommand({ action: "set_dataset", mode });
-      }
+      setDatasetMode(mode);
     }, 300);
   };
 

@@ -383,8 +383,35 @@ export function sendMessage(payload) {
 let lastDatasetCommandTime = 0;
 let lastDatasetPendingTimer = null;
 
+export function setDatasetMode(wsOrMode, maybeMode) {
+  let targetWs = ws || activeWs;
+  let mode = wsOrMode;
+  if (typeof wsOrMode === "object" && wsOrMode !== null && wsOrMode.send) {
+    targetWs = wsOrMode;
+    mode = maybeMode;
+  }
+  const cleanMode = String(mode || "static").toLowerCase();
+  const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+  const command = JSON.stringify({
+    action: "set_dataset",
+    type: "set_dataset",
+    mode: cleanMode,
+  });
+
+  if (targetWs && targetWs.readyState === OPEN) {
+    try {
+      targetWs.send(command);
+      console.log("[Telemetry] Sent dataset switch command:", command);
+    } catch (err) {
+      console.warn("[Telemetry] Error sending dataset switch command:", err);
+    }
+  } else {
+    console.warn("[Telemetry] Cannot switch dataset: WebSocket is not open");
+  }
+}
+
 export function sendCommand(payload) {
-  if (payload && (payload.action === "set_dataset" || payload.command === "set_dataset")) {
+  if (payload && (payload.action === "set_dataset" || payload.command === "set_dataset" || payload.type === "set_dataset")) {
     if (lastDatasetPendingTimer) {
       clearTimeout(lastDatasetPendingTimer);
       lastDatasetPendingTimer = null;
@@ -394,11 +421,13 @@ export function sendCommand(payload) {
       lastDatasetPendingTimer = setTimeout(() => {
         lastDatasetPendingTimer = null;
         lastDatasetCommandTime = typeof performance !== "undefined" ? performance.now() : Date.now();
-        sendPlaybackCommand(payload);
+        setDatasetMode(payload.mode);
       }, 300 - (now - lastDatasetCommandTime));
       return;
     }
     lastDatasetCommandTime = now;
+    setDatasetMode(payload.mode);
+    return;
   }
   return sendPlaybackCommand(payload);
 }
@@ -570,6 +599,10 @@ export function connectWebSocket() {
         if (isPaused) {
           lastFrameAt = typeof performance !== "undefined" ? performance.now() : Date.now();
         }
+        return;
+      }
+      if (data && (data.type === "dataset_swapped" || data.action === "dataset_swapped")) {
+        console.log("[Telemetry] Dataset swapped confirmation received from server:", data);
         return;
       }
       dispatchTelemetryFrame(data);
@@ -821,6 +854,10 @@ export class TelemetryService {
 
   sendMessage(data) {
     this.send(data);
+  }
+
+  setDatasetMode(mode) {
+    setDatasetMode(this.socket || ws, mode);
   }
 }
 

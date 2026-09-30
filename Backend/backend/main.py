@@ -284,13 +284,17 @@ class PerceptionPipeline:
                             break
 
         self.current_dataset_mode = target_mode
+        sweep_count = len(getattr(self.dataset_loader, "files", [])) if hasattr(self, "dataset_loader") and self.dataset_loader else 0
         if hasattr(self, 'server') and self.server:
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(
                     self.server.broadcast(json.dumps({
                         "type": "dataset_swapped",
+                        "action": "dataset_swapped",
                         "mode": target_mode,
+                        "current_mode": target_mode,
+                        "sweep_count": sweep_count,
                         "description": desc
                     }))
                 )

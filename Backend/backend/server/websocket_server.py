@@ -207,9 +207,25 @@ class TelemetryWebSocketServer:
                 logger.info("[WS] Stepped to next frame.")
 
             elif msg_type in ("set_dataset", "switch_dataset", "dataset_toggle"):
-                mode = data.get("mode") or data.get("dataset") or "static"
+                mode = str(data.get("mode") or data.get("dataset") or "static").lower()
                 logger.info(f"[WS] Switching dataset mode to: {mode}")
                 self.switch_dataset(mode)
+                sweep_count = 0
+                if hasattr(self, "pipeline") and self.pipeline is not None and hasattr(self.pipeline, "dataset_loader"):
+                    sweep_count = len(getattr(self.pipeline.dataset_loader, "files", []))
+                elif hasattr(self, "loader") and self.loader is not None and hasattr(self.loader, "files"):
+                    sweep_count = len(getattr(self.loader, "files", []))
+                current_mode = getattr(self.pipeline, "current_dataset_mode", mode) if hasattr(self, "pipeline") and self.pipeline else mode
+                try:
+                    await websocket.send(json.dumps({
+                        "type": "dataset_swapped",
+                        "action": "dataset_swapped",
+                        "mode": mode,
+                        "current_mode": current_mode,
+                        "sweep_count": sweep_count
+                    }))
+                except Exception as ack_err:
+                    logger.debug(f"[WS] Acknowledgment send failed: {ack_err}")
 
             elif msg_type == "seek":
                 target_frame = data.get("frame", 0)
@@ -231,10 +247,10 @@ class TelemetryWebSocketServer:
                     else:
                         self.command_callback(data)
                 except Exception as cb_err:
-                    logger.warning(f"[WS] Command callback error: {cb_err}")
+                    logger.warning(f"[WS Command Error]: {cb_err}")
 
         except Exception as e:
-            logger.error(f"[WS] Error executing command '{msg_type}': {e}", exc_info=True)
+            logger.error(f"[WS Command Error]: {e}", exc_info=True)
             # Crucial: Send error notification back to client instead of crashing the server
             try:
                 await websocket.send(json.dumps({"type": "error", "message": str(e)}))

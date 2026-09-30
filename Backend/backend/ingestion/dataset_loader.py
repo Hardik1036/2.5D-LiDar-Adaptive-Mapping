@@ -48,35 +48,77 @@ def resolve_sweep_directory(
     Resolves the active LiDAR sweeps directory across Docker, Railway,
     and local paths, ensuring real .bin sweeps are discovered.
     """
-    # 1. If explicit candidate directory is passed and contains .bin files, use it
+    mode = "dynamic" if "dynamic" in str(preferred_mode or "dynamic").lower() else "static"
+
+    # 1. If explicit candidate directory is passed and matches preferred_mode, check it
     if candidate_dir:
         cand_path = Path(candidate_dir)
-        if cand_path.exists():
+        cand_str = str(cand_path).lower()
+        is_conflicting = (mode == "dynamic" and "static" in cand_str and "dynamic" not in cand_str) or \
+                         (mode == "static" and "dynamic" in cand_str and "static" not in cand_str)
+        if not is_conflicting and cand_path.exists():
             if any(cand_path.glob("*.bin")):
-                logger.info(f"[DatasetLoader] Found valid sweeps directory at: {cand_path.resolve()}")
+                logger.info(f"[INGESTION] Found valid sweeps directory at: {cand_path.resolve()}")
                 return cand_path
             # Check nested velodyne
             if (cand_path / "velodyne").exists() and any((cand_path / "velodyne").glob("*.bin")):
-                logger.info(f"[DatasetLoader] Found valid sweeps directory at: {(cand_path / 'velodyne').resolve()}")
+                logger.info(f"[INGESTION] Found valid sweeps directory at: {(cand_path / 'velodyne').resolve()}")
                 return cand_path / "velodyne"
             if (cand_path / "training" / "velodyne").exists() and any((cand_path / "training" / "velodyne").glob("*.bin")):
-                logger.info(f"[DatasetLoader] Found valid sweeps directory at: {(cand_path / 'training' / 'velodyne').resolve()}")
+                logger.info(f"[INGESTION] Found valid sweeps directory at: {(cand_path / 'training' / 'velodyne').resolve()}")
                 return cand_path / "training" / "velodyne"
 
-    mode = (preferred_mode or "dynamic").lower()
-
-    # Prioritize mode-specific paths
-    if mode == "static":
-        mode_candidates = [p for p in CANDIDATE_PATHS if "static" in str(p)]
-        other_candidates = [p for p in CANDIDATE_PATHS if "static" not in str(p)]
+    # 2. Prioritize mode-specific paths
+    if mode == "dynamic":
+        mode_candidates = [
+            BACKEND_DIR / "data" / "dynamic_corridor" / "velodyne",
+            REPO_ROOT / "Backend" / "data" / "dynamic_corridor" / "velodyne",
+            REPO_ROOT / "data" / "dynamic_corridor" / "velodyne",
+            Path("data/dynamic_test"),
+            Path("data/dynamic_test/velodyne"),
+            Path("Backend/data/dynamic_test"),
+            Path("Backend/data/dynamic_test/velodyne"),
+            Path("data/kaggle_cache/data/dynamic"),
+            Path("Backend/data/kaggle_cache/data/dynamic"),
+            Path("data/dynamic_corridor/velodyne"),
+            Path("Backend/data/dynamic_corridor/velodyne"),
+            Path("/app/data/dynamic_corridor/velodyne"),
+            Path("/app/Backend/data/dynamic_corridor/velodyne"),
+            Path("/app/backend/data/dynamic_corridor/velodyne"),
+            BACKEND_DIR / "data" / "dynamic_corridor",
+            REPO_ROOT / "Backend" / "data" / "dynamic_corridor",
+        ]
     else:
-        mode_candidates = [p for p in CANDIDATE_PATHS if "dynamic" in str(p)]
-        other_candidates = [p for p in CANDIDATE_PATHS if "dynamic" not in str(p)]
+        mode_candidates = [
+            BACKEND_DIR / "data" / "static_corridor" / "velodyne",
+            REPO_ROOT / "Backend" / "data" / "static_corridor" / "velodyne",
+            REPO_ROOT / "data" / "static_corridor" / "velodyne",
+            Path("data/kitti_clean/training/velodyne"),
+            Path("Backend/data/kitti_clean/training/velodyne"),
+            Path("data/kaggle_cache/data/kitti_clean/training/velodyne"),
+            Path("Backend/data/kaggle_cache/data/kitti_clean/training/velodyne"),
+            Path("data/test_sweep"),
+            Path("Backend/data/test_sweep"),
+            Path("data/static_corridor/velodyne"),
+            Path("Backend/data/static_corridor/velodyne"),
+            Path("/app/data/static_corridor/velodyne"),
+            Path("/app/Backend/data/static_corridor/velodyne"),
+            Path("/app/backend/data/static_corridor/velodyne"),
+            BACKEND_DIR / "data" / "static_corridor",
+            REPO_ROOT / "Backend" / "data" / "static_corridor",
+        ]
 
-    for candidate in mode_candidates + other_candidates:
-        if candidate.exists() and any(candidate.glob("*.bin")):
-            logger.info(f"[DatasetLoader] Found valid sweeps directory at: {candidate.resolve()}")
-            return candidate
+    for candidate in mode_candidates:
+        if candidate.exists():
+            if any(candidate.glob("*.bin")):
+                logger.info(f"[INGESTION] Found valid sweeps directory at: {candidate.resolve()}")
+                return candidate
+            if (candidate / "velodyne").exists() and any((candidate / "velodyne").glob("*.bin")):
+                logger.info(f"[INGESTION] Found valid sweeps directory at: {(candidate / 'velodyne').resolve()}")
+                return candidate / "velodyne"
+            if (candidate / "training" / "velodyne").exists() and any((candidate / "training" / "velodyne").glob("*.bin")):
+                logger.info(f"[INGESTION] Found valid sweeps directory at: {(candidate / 'training' / 'velodyne').resolve()}")
+                return candidate / "training" / "velodyne"
 
     # Recursive fallback across common data search roots
     for root in [
@@ -89,14 +131,16 @@ def resolve_sweep_directory(
     ]:
         if root.exists():
             bins = list(root.rglob("*.bin"))
-            if bins:
-                parent_dir = bins[0].parent
-                logger.info(f"[DatasetLoader] Found valid sweeps directory via rglob at: {parent_dir.resolve()}")
+            mode_bins = [b for b in bins if mode in str(b).lower()]
+            selected_bins = mode_bins if mode_bins else bins
+            if selected_bins:
+                parent_dir = selected_bins[0].parent
+                logger.info(f"[INGESTION] Found valid sweeps directory via rglob at: {parent_dir.resolve()}")
                 return parent_dir
 
     # Fallback to the primary candidate if none exist yet
-    fallback = BACKEND_DIR / "data" / "dynamic_corridor" / "velodyne"
-    logger.warning(f"[DatasetLoader] Could not find .bin files in candidates. Defaulting to: {fallback}")
+    fallback = BACKEND_DIR / "data" / f"{mode}_corridor" / "velodyne"
+    logger.warning(f"[INGESTION] Could not find .bin files in candidates. Defaulting to: {fallback}")
     return fallback
 
 
@@ -214,20 +258,18 @@ class DatasetLoader:
 
     def resolve_sweep_directory(self, preferred_mode: Optional[str] = None) -> Path:
         """Resolves the active LiDAR sweeps directory for the current or preferred mode."""
-        mode = preferred_mode or self.mode
-        return resolve_sweep_directory(preferred_mode=mode, candidate_dir=self.data_dir)
+        mode = preferred_mode or ("dynamic" if "dynamic" in str(self.mode).lower() else "static")
+        return resolve_sweep_directory(preferred_mode=mode)
 
     def switch_dataset(self, mode: str) -> bool:
         """
         Safely swaps the dataset mode between 'static' and 'dynamic' corridor sweeps
         without setting file lists to empty or raising IndexError.
         """
+        target_mode = "dynamic" if "dynamic" in str(mode).lower() else "static"
         with self._lock:
-            self.mode = "dynamic_corridor" if "dynamic" in str(mode).lower() else "static_corridor"
-            resolved_dir = self.resolve_sweep_directory()
-            self.data_dir = resolved_dir
-            self.dataset_dir = resolved_dir
-            self.sweep_dir = resolved_dir
+            self.mode = f"{target_mode}_corridor"
+            resolved_dir = resolve_sweep_directory(preferred_mode=target_mode)
             if resolved_dir.exists():
                 new_files = sorted(list(resolved_dir.glob("*.bin")))
                 if not new_files:
@@ -235,12 +277,19 @@ class DatasetLoader:
             else:
                 new_files = []
 
-            self.files = new_files
-            self.bin_files = new_files
-            self.current_index = 0
-            self.current_idx = 0
-            logger.info(f"[DatasetLoader] Swapped to {self.mode} with {len(self.files)} sweeps from {self.data_dir}.")
-            return True
+            if new_files:
+                self.data_dir = resolved_dir
+                self.dataset_dir = resolved_dir
+                self.sweep_dir = resolved_dir
+                self.files = new_files
+                self.bin_files = new_files
+                self.current_index = 0
+                self.current_idx = 0
+                logger.info(f"[INGESTION] Swapping dataset to: {self.data_dir} ({len(self.files)} sweeps found, mode: {self.mode})")
+                return True
+            else:
+                logger.warning(f"[INGESTION] Failed to find sweeps for mode {target_mode} in {resolved_dir}")
+                return False
 
     def get_next_frame(self) -> Optional[np.ndarray]:
         """Alias for get_next_sweep for compatibility with frame stepping commands."""

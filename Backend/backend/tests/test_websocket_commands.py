@@ -79,15 +79,25 @@ def test_websocket_server_dataset_switch():
         server.pipeline = pipeline
         ws = MockWebSocket()
 
-        # Switch to dynamic
-        await server.handle_client_message(ws, json.dumps({"type": "set_dataset", "mode": "dynamic"}))
+        # Switch to dynamic using "action"
+        await server.handle_client_message(ws, json.dumps({"action": "set_dataset", "mode": "dynamic"}))
         assert pipeline.current_dataset_mode == "dynamic"
         assert len(pipeline.dataset_loader.files) > 0
+        assert len(ws.sent_messages) == 1
+        ack1 = json.loads(ws.sent_messages[0])
+        assert ack1.get("type") == "dataset_swapped"
+        assert ack1.get("mode") == "dynamic"
+        assert ack1.get("sweep_count") > 0
 
-        # Switch back to static
+        # Switch back to static using "type"
         await server.handle_client_message(ws, json.dumps({"type": "switch_dataset", "mode": "static"}))
         assert pipeline.current_dataset_mode == "static"
         assert len(pipeline.dataset_loader.files) > 0
+        assert len(ws.sent_messages) == 2
+        ack2 = json.loads(ws.sent_messages[1])
+        assert ack2.get("type") == "dataset_swapped"
+        assert ack2.get("mode") == "static"
+        assert ack2.get("sweep_count") > 0
     asyncio.run(_run())
 
 
