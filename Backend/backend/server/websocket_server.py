@@ -102,6 +102,7 @@ class TelemetryWebSocketServer:
         self._is_running = False
         self.command_callback = None
         self.is_paused = False
+        self.playback_speed: float = 1.0
         self.pipeline = None
         self.loader = None
 
@@ -214,6 +215,13 @@ class TelemetryWebSocketServer:
                 target_frame = data.get("frame", 0)
                 self.seek_frame(target_frame)
                 logger.info(f"[WS] Seek to frame: {target_frame}")
+
+            elif msg_type in ("set_speed", "playback_speed", "speed"):
+                speed = float(data.get("speed") or data.get("value", 1.0))
+                self.playback_speed = max(0.1, min(speed, 5.0))
+                if hasattr(self, "pipeline") and self.pipeline is not None:
+                    self.pipeline.playback_speed = self.playback_speed
+                logger.info(f"[WS] Playback speed set to {self.playback_speed}x")
 
             # Also invoke registered command_callback if any (e.g. speed adjustment or state sync)
             if self.command_callback is not None:

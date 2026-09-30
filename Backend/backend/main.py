@@ -871,10 +871,11 @@ class PerceptionPipeline:
                 # Adaptive non-blocking loop pacing to maintain target FPS without artificial blocking delay
                 if pacing and not self.kaggle:
                     elapsed = time.perf_counter() - t0
-                    base_interval = 1.0 / max(1.0, self.target_fps)
-                    target_interval = base_interval / max(0.1, self.playback_speed)
-                    sleep_time = max(0.001, target_interval - elapsed)
-                    await asyncio.sleep(sleep_time)
+                    speed_multiplier = getattr(self, "playback_speed", 1.0)
+                    base_delay = 1.0 / max(0.5, self.target_fps)  # e.g., 1.0 / 4.0 = 0.25s
+                    target_interval = base_delay / max(0.1, speed_multiplier)
+                    actual_delay = max(0.05, target_interval - elapsed)
+                    await asyncio.sleep(actual_delay)
                 else:
                     await asyncio.sleep(0.001)
 

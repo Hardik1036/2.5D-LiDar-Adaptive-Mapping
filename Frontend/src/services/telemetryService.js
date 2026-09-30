@@ -376,6 +376,10 @@ export function sendPlaybackCommand(payload) {
   }
 }
 
+export function sendMessage(payload) {
+  sendPlaybackCommand(payload);
+}
+
 let lastDatasetCommandTime = 0;
 let lastDatasetPendingTimer = null;
 
@@ -410,12 +414,12 @@ export function setLivePaused(paused) {
     }
   }
   // Send control command to backend if connected
-  sendPlaybackCommand({ action: isPaused ? "pause" : "resume", command: isPaused ? "pause" : "resume" });
+  sendPlaybackCommand({ type: isPaused ? "pause" : "resume", action: isPaused ? "pause" : "resume", command: isPaused ? "pause" : "resume" });
 }
 
 export function setLivePlaybackSpeed(speed) {
   playbackSpeed = Math.max(0.1, Number(speed) || 1.0);
-  sendPlaybackCommand({ action: "set_speed", command: "set_speed", speed: playbackSpeed });
+  sendPlaybackCommand({ type: "set_speed", action: "set_speed", command: "set_speed", speed: playbackSpeed });
 }
 
 export function isLivePaused() {
@@ -813,6 +817,10 @@ export class TelemetryService {
       const payload = typeof data === "string" ? data : JSON.stringify(data);
       s.send(payload);
     }
+  }
+
+  sendMessage(data) {
+    this.send(data);
   }
 }
 

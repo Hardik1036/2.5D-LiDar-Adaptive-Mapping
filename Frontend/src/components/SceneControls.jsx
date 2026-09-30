@@ -14,6 +14,7 @@ import {
   isLivePaused,
   stepLiveFrame,
   sendCommand,
+  telemetryService,
 } from "../services/telemetryService.js";
 const MODE_HINT = {
   [MODE_POINTS]:
@@ -76,12 +77,18 @@ export default function SceneControls({
   };
 
   const handleSpeedChange = (speed) => {
-    const s = Math.max(0.1, Math.min(2.0, Number(speed) || 1.0));
+    const s = Math.max(0.1, Math.min(5.0, Number(speed) || 1.0));
     change("playbackSpeed", s);
+    setLivePlaybackSpeed(s);
     if (onSpeedChange) {
       onSpeedChange(s);
-    } else {
-      setLivePlaybackSpeed(s);
+    }
+    // Transmit command to backend so the server throttles accordingly
+    if (telemetryService && typeof telemetryService.sendMessage === "function") {
+      telemetryService.sendMessage({
+        type: "set_speed",
+        speed: s,
+      });
     }
   };
 

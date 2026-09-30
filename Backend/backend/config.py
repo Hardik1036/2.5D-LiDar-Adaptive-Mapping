@@ -182,7 +182,7 @@ class PipelineConfig:
     WS_HOST: str = field(default_factory=lambda: os.environ.get("WS_HOST", "0.0.0.0"))
     WS_PORT: int = field(default_factory=lambda: int(os.environ.get("PORT", os.environ.get("WS_PORT", "8765"))))
     INGESTION_HZ: float = field(default_factory=lambda: float(os.environ.get("INGESTION_HZ", "20.0")))
-    TARGET_FPS: float = field(default_factory=lambda: float(os.environ.get("TARGET_FPS", "20.0")))
+    TARGET_FPS: float = field(default_factory=lambda: float(os.environ.get("TARGET_FPS", "4.0")))
     MAX_PAYLOAD_CELLS: int = field(default_factory=lambda: int(os.environ.get("MAX_PAYLOAD_CELLS", "10000")))
     PING_INTERVAL: float = field(default_factory=lambda: float(os.environ.get("WS_PING_INTERVAL", "30.0")))
     PING_TIMEOUT: float = field(default_factory=lambda: float(os.environ.get("WS_PING_TIMEOUT", "60.0")))

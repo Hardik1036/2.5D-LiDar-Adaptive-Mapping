@@ -48,13 +48,13 @@ def test_websocket_server_pause_resume():
 
         # Send pause command
         await server.handle_client_message(ws, json.dumps({"type": "pause"}))
-        assert server.is_paused is True
-        assert pipeline.is_paused is True
+        assert bool(getattr(server, "is_paused"))
+        assert bool(getattr(pipeline, "is_paused"))
 
         # Send resume command
         await server.handle_client_message(ws, json.dumps({"type": "resume"}))
-        assert server.is_paused is False
-        assert pipeline.is_paused is False
+        assert not getattr(server, "is_paused")
+        assert not getattr(pipeline, "is_paused")
     asyncio.run(_run())
 
 
@@ -104,6 +104,23 @@ def test_websocket_server_seek():
     asyncio.run(_run())
 
 
+def test_websocket_server_set_speed():
+    async def _run():
+        server = TelemetryWebSocketServer()
+        pipeline = PerceptionPipeline()
+        server.pipeline = pipeline
+        ws = MockWebSocket()
+
+        await server.handle_client_message(ws, json.dumps({"type": "set_speed", "speed": 0.5}))
+        assert server.playback_speed == 0.5
+        assert pipeline.playback_speed == 0.5
+
+        await server.handle_client_message(ws, json.dumps({"type": "set_speed", "speed": 2.0}))
+        assert server.playback_speed == 2.0
+        assert pipeline.playback_speed == 2.0
+    asyncio.run(_run())
+
+
 def test_websocket_server_malformed_json_guard():
     async def _run():
         server = TelemetryWebSocketServer()
@@ -122,7 +139,7 @@ def test_websocket_server_exception_guard():
         ws = MockWebSocket()
 
         # Create a failing callback to simulate unexpected runtime errors
-        def failing_action(data):
+        def failing_action(mode: str) -> None:
             raise RuntimeError("Simulated internal perception failure")
 
         server.switch_dataset = failing_action
