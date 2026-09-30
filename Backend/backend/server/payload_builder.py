@@ -370,8 +370,11 @@ class PayloadBuilder:
             # orjson natively handles numpy float/int arrays and is written in Rust
             payload_str = orjson.dumps(payload_dict, option=orjson.OPT_SERIALIZE_NUMPY).decode("utf-8")
         else:
+            import math
             def _failsafe(obj):
                 if isinstance(obj, (np.floating, float)):
+                    if math.isnan(obj) or math.isinf(obj):
+                        return 0.0
                     return float(obj)
                 if isinstance(obj, (np.integer, int)):
                     return int(obj)

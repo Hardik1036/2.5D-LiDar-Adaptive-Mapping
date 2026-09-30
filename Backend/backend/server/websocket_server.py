@@ -258,7 +258,10 @@ class TelemetryWebSocketServer:
         ):
             pass
         except Exception as e:
-            logger.debug(f"[WebSocketServer] Client {remote} connection closed: {e}")
+            if "1006" in str(e) or "abnormal closure" in str(e).lower() or isinstance(e, websockets.exceptions.ConnectionClosedError):
+                logger.debug(f"[WebSocketServer] Client {remote} closed unexpectedly: {e}")
+            else:
+                logger.debug(f"[WebSocketServer] Client {remote} connection closed: {e}")
         finally:
             self.connected_clients.discard(websocket)
             logger.info(f"[TelemetryServer]: client disconnected from {remote}. Active clients: {len(self.connected_clients)}")

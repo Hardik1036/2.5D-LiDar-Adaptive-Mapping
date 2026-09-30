@@ -192,7 +192,8 @@ class CostmapEvaluator:
             if leaf.cost == 100:
                 continue
             if slope <= max_slope:
-                leaf.cost = int(slope * inv_max_slope)
+                cost_val = int(slope * inv_max_slope)
+                leaf.cost = max(0, min(255, cost_val))
             else:
                 leaf.cost = safe_max
 

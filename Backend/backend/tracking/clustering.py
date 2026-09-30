@@ -69,6 +69,8 @@ class EuclideanClusterer:
         Groups obstacle points into distinct spatial clusters.
         Accelerated with fast 2D BEV connected components for dense sweeps and DBSCAN for sparse sweeps.
         """
+        if obstacle_points is None or len(obstacle_points) == 0:
+            return []
         n_pts = len(obstacle_points)
         if n_pts < self.min_pts:
             return []

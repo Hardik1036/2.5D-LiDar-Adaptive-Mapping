@@ -192,6 +192,11 @@ class AdaptiveQuadtree:
         Safely retrieves pre-allocated coarse node or dynamically expands pool to prevent IndexError.
         Guarantees zero-crash operation when spatial boundaries expand or shift dynamically.
         """
+        # Impose a hard limit on the pool expansion to prevent unbounded memory allocation leaks (e.g. 500,000 max nodes)
+        MAX_POOL_LIMIT = 500000
+        if key >= MAX_POOL_LIMIT:
+            return None
+
         if key < len(self._coarse_pool):
             node = self._coarse_pool[key]
             node.x = cx
@@ -410,6 +415,8 @@ class AdaptiveQuadtree:
             cx = self.bounds.X_MIN + (ix + 0.5) * self.coarse_res
             cy = self.bounds.Y_MIN + (iy + 0.5) * self.coarse_res
             node = self._get_or_create_coarse_node(key, cx, cy)
+            if node is None:
+                continue
             
             st = node.stats
             min_z_val = float(c_min_arr[i])
