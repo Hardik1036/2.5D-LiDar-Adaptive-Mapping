@@ -339,8 +339,8 @@ const pausedFrameQueue = [];
 // Global Singleton State
 let ws = null;
 let reconnectTimer = null;
-const INITIAL_RECONNECT_DELAY = typeof window !== "undefined" && !window.document ? 1000 : 1500;
-let reconnectDelay = INITIAL_RECONNECT_DELAY; // 1.5s initial backoff in browser (1.0s in tests)
+const INITIAL_RECONNECT_DELAY = typeof window !== "undefined" && !window.document ? 1000 : 3000;
+let reconnectDelay = INITIAL_RECONNECT_DELAY; // Wait at least 3,000 ms before retrying
 let isExplicitlyClosed = false;
 
 let lastFrameAt = 0;
@@ -507,6 +507,21 @@ export function connectWebSocket() {
     reconnectTimer = null;
   }
 
+  // 3. Clean up completely closed sockets before making a new one
+  if (ws) {
+    ws.onopen = null;
+    ws.onclose = null;
+    ws.onerror = null;
+    ws.onmessage = null;
+    try {
+      if (ws.readyState === OPEN) {
+        ws.close();
+      }
+    } catch {}
+    ws = null;
+    activeWs = null;
+  }
+
   isExplicitlyClosed = false;
 
   const targetUrl = (
@@ -525,6 +540,9 @@ export function connectWebSocket() {
   try {
     ws = new WebSocket(targetUrl);
     activeWs = ws;
+    if (typeof telemetryService !== "undefined") {
+      telemetryService.socket = ws;
+    }
     openedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
   } catch (err) {
     console.warn("[Telemetry] WebSocket creation failed:", err);
@@ -535,6 +553,9 @@ export function connectWebSocket() {
   ws.onopen = () => {
     console.log("[Telemetry] Connected to Drishti WebSocket telemetry stream");
     reconnectDelay = INITIAL_RECONNECT_DELAY; // Reset backoff on success
+    if (typeof telemetryService !== "undefined") {
+      telemetryService.reconnectAttempts = 0;
+    }
   };
 
   ws.onmessage = (event) => {
@@ -556,11 +577,19 @@ export function connectWebSocket() {
   ws.onclose = () => {
     ws = null;
     activeWs = null;
+    if (typeof telemetryService !== "undefined") {
+      telemetryService.socket = null;
+    }
     if (activeDisconnected) {
       activeDisconnected();
     }
     if (!isExplicitlyClosed) {
-      scheduleReconnect();
+      // Debounce reconnection: wait at least 3 seconds so the server/proxy has time to settle
+      clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWebSocket();
+      }, 3000);
     }
   };
 
@@ -571,9 +600,11 @@ export function connectWebSocket() {
 
 function scheduleReconnect() {
   if (reconnectTimer || isExplicitlyClosed) return;
-  const delay = reconnectDelay;
-  const multiplier = typeof window !== "undefined" && !window.document ? 2 : 1.5;
-  reconnectDelay = Math.min(reconnectDelay * multiplier, 8000); // Exponential backoff capped at 8s
+  // Debounce reconnection: wait at least 3,000 ms before retrying
+  const delay = Math.max(reconnectDelay, 3000);
+  const multiplier = typeof window !== "undefined" && !window.document ? 1.5 : 1.5;
+  reconnectDelay = Math.min(delay * multiplier, 12000); // Exponential backoff capped at 12s
+  clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     connectWebSocket();
@@ -675,18 +706,31 @@ export function connectTelemetry(onFrame, onStatusChange) {
     ) {
       startFallback();
     }
-    if (!isPaused && ws && now - (lastFrameAt || openedAt) >= GRACE_MS) {
-      const old = ws;
-      ws = null;
-      activeWs = null;
-      old.onclose = null;
-      old.onerror = null;
-      old.onmessage = null;
-      try {
-        old.close();
-      } catch {}
-      disconnected();
-      scheduleReconnect();
+    if (!isPaused && ws) {
+      const CONNECTING = typeof WebSocket !== "undefined" ? WebSocket.CONNECTING : 0;
+      const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+      // Do NOT abort or sever in-flight sockets while CONNECTING!
+      if (ws.readyState === CONNECTING) {
+        return;
+      }
+      // If OPEN but has been silent without frames or keep-alives for >= 15 seconds, recycle
+      if (ws.readyState === OPEN && now - (lastFrameAt || openedAt) >= 15000) {
+        const old = ws;
+        ws = null;
+        activeWs = null;
+        if (typeof telemetryService !== "undefined") {
+          telemetryService.socket = null;
+        }
+        old.onopen = null;
+        old.onclose = null;
+        old.onerror = null;
+        old.onmessage = null;
+        try {
+          old.close();
+        } catch {}
+        disconnected();
+        scheduleReconnect();
+      }
     }
   }, 500);
 
@@ -721,3 +765,56 @@ export function connectTelemetry(onFrame, onStatusChange) {
 
   return stop;
 }
+
+export class TelemetryService {
+  constructor(url) {
+    this.url = url || WS_URL;
+    this.socket = null;
+    this.reconnectTimer = null;
+    this.reconnectAttempts = 0;
+  }
+
+  connect() {
+    const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+    const CONNECTING = typeof WebSocket !== "undefined" ? WebSocket.CONNECTING : 0;
+
+    // If already connected OR currently in the middle of connecting, DO NOT recreate!
+    if (this.socket && (this.socket.readyState === OPEN || this.socket.readyState === CONNECTING)) {
+      return;
+    }
+
+    // Clean up completely closed sockets before making a new one
+    if (this.socket) {
+      this.socket.onopen = null;
+      this.socket.onclose = null;
+      this.socket.onerror = null;
+      this.socket.onmessage = null;
+      try {
+        if (this.socket.readyState === OPEN) {
+          this.socket.close();
+        }
+      } catch {}
+      this.socket = null;
+    }
+
+    connectWebSocket();
+    this.socket = ws;
+  }
+
+  disconnect() {
+    disconnectWebSocket();
+    this.socket = null;
+  }
+
+  send(data) {
+    const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+    const s = this.socket || ws;
+    if (s && s.readyState === OPEN) {
+      const payload = typeof data === "string" ? data : JSON.stringify(data);
+      s.send(payload);
+    }
+  }
+}
+
+export const telemetryService = new TelemetryService();
+export default telemetryService;

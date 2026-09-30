@@ -88,13 +88,15 @@ class TelemetryWebSocketServer:
         self,
         host: str = CONFIG.WS_HOST,
         port: int = CONFIG.WS_PORT,
-        ping_interval: float = CONFIG.PING_INTERVAL,
-        ping_timeout: float = CONFIG.PING_TIMEOUT,
+        ping_interval: float = 30.0,
+        ping_timeout: float = 60.0,
+        close_timeout: float = 30.0,
     ):
         self.host = host
         self.port = port
         self.ping_interval = ping_interval
         self.ping_timeout = ping_timeout
+        self.close_timeout = close_timeout
         self.connected_clients: Set[Any] = set()
         self.server = None
         self._is_running = False
@@ -294,14 +296,15 @@ class TelemetryWebSocketServer:
             self.client_handler,
             host=host,
             port=port,
-            max_size=10 * 1024 * 1024,      # 10 MB max payload size for dense point/quadtree sweeps
-            ping_interval=getattr(self, "ping_interval", 20),
-            ping_timeout=getattr(self, "ping_timeout", 20),
+            max_size=15 * 1024 * 1024,      # 15 MB max payload size for dense point/quadtree sweeps
+            ping_interval=getattr(self, "ping_interval", 30),
+            ping_timeout=getattr(self, "ping_timeout", 60),
+            close_timeout=getattr(self, "close_timeout", 30),
             origins=origins,
             process_request=process_request,
         )
         self._is_running = True
-        logger.info(f"[WebSocketServer] Listening on ws://{host}:{port} with HTTP probe handling (Max Buffer: 10MB)")
+        logger.info(f"[WebSocketServer] Listening on ws://{host}:{port} with HTTP probe handling (Max Buffer: 15MB, Ping: 30s, Timeout: 60s)")
 
     async def broadcast(self, message: Any):
         """
