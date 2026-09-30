@@ -62,3 +62,32 @@ def test_pipeline_set_dataset_command_handler():
     pipeline.handle_client_command({"action": "set_dataset", "mode": "static"})
     assert pipeline.current_dataset_mode == "static"
     assert len(pipeline.dataset_loader.files) > 0
+
+
+def test_dataset_loader_switch_dataset_api():
+    loader = DatasetLoader()
+    # Switch to dynamic
+    res_dyn = loader.switch_dataset("dynamic")
+    assert res_dyn is True
+    assert "dynamic" in loader.mode
+    assert loader.current_idx == 0
+    assert loader.current_index == 0
+    assert len(loader.files) > 0
+
+    frame1 = loader.get_next_frame()
+    assert frame1 is not None
+    assert loader.current_index == 1
+
+    # Switch to static
+    res_stat = loader.switch_dataset("static")
+    assert res_stat is True
+    assert "static" in loader.mode
+    assert loader.current_index == 0
+    assert len(loader.files) > 0
+
+    # Test seek_frame
+    target = min(5, len(loader.files) - 1)
+    new_idx = loader.seek_frame(target)
+    assert new_idx == target
+    assert loader.current_index == target
+    assert loader.current_idx == target

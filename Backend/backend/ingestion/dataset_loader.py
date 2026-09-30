@@ -119,6 +119,7 @@ class DatasetLoader:
         self.files: List[Path] = []
         self.bin_files: List[Path] = []
         self.current_index: int = 0
+        self.current_idx: int = 0
 
         active_mode = "static"
         candidate_dir = None
@@ -204,11 +205,58 @@ class DatasetLoader:
                 self.files = new_files
                 self.bin_files = new_files
                 self.current_index = 0
+                self.current_idx = 0
             logger.info(f"[DatasetLoader] Swapped active dataset to {len(self.files)} sweeps in {target_path}")
             return True
         else:
             logger.warning(f"[DatasetLoader] No .bin sweeps discovered in: {new_dir}")
             return False
+
+    def resolve_sweep_directory(self, preferred_mode: Optional[str] = None) -> Path:
+        """Resolves the active LiDAR sweeps directory for the current or preferred mode."""
+        mode = preferred_mode or self.mode
+        return resolve_sweep_directory(preferred_mode=mode, candidate_dir=self.data_dir)
+
+    def switch_dataset(self, mode: str) -> bool:
+        """
+        Safely swaps the dataset mode between 'static' and 'dynamic' corridor sweeps
+        without setting file lists to empty or raising IndexError.
+        """
+        with self._lock:
+            self.mode = "dynamic_corridor" if "dynamic" in str(mode).lower() else "static_corridor"
+            resolved_dir = self.resolve_sweep_directory()
+            self.data_dir = resolved_dir
+            self.dataset_dir = resolved_dir
+            self.sweep_dir = resolved_dir
+            if resolved_dir.exists():
+                new_files = sorted(list(resolved_dir.glob("*.bin")))
+                if not new_files:
+                    new_files = sorted(list(resolved_dir.rglob("*.bin")))
+            else:
+                new_files = []
+
+            self.files = new_files
+            self.bin_files = new_files
+            self.current_index = 0
+            self.current_idx = 0
+            logger.info(f"[DatasetLoader] Swapped to {self.mode} with {len(self.files)} sweeps from {self.data_dir}.")
+            return True
+
+    def get_next_frame(self) -> Optional[np.ndarray]:
+        """Alias for get_next_sweep for compatibility with frame stepping commands."""
+        return self.get_next_sweep()
+
+    def seek_frame(self, target_frame: int) -> int:
+        """Safely updates current_index / current_idx to the specified frame."""
+        with self._lock:
+            if not self.files:
+                self.current_index = 0
+                self.current_idx = 0
+                return 0
+            idx = max(0, min(int(target_frame), len(self.files) - 1))
+            self.current_index = idx
+            self.current_idx = idx
+            return idx
 
     def get_next_sweep(self) -> Optional[np.ndarray]:
         """
@@ -224,6 +272,7 @@ class DatasetLoader:
                 self.current_index = 0
             file_path = self.files[self.current_index]
             self.current_index += 1
+            self.current_idx = self.current_index
 
         try:
             raw = np.fromfile(str(file_path), dtype=np.float32)

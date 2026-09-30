@@ -99,6 +99,9 @@ class TelemetryWebSocketServer:
         self.server = None
         self._is_running = False
         self.command_callback = None
+        self.is_paused = False
+        self.pipeline = None
+        self.loader = None
 
     def set_command_callback(self, callback):
         """Registers a callback for processing frontend HUD playback controls."""
@@ -115,6 +118,118 @@ class TelemetryWebSocketServer:
                     self.command_callback(cmd)
             except Exception as e:
                 logger.warning(f"[WebSocketServer] Failed to set dataset mode: {e}")
+        elif hasattr(self, "pipeline") and self.pipeline is not None and hasattr(self.pipeline, "switch_dataset"):
+            self.pipeline.switch_dataset(mode)
+
+    def step_next_frame(self):
+        """Advance single frame safely without crashing."""
+        if hasattr(self, "pipeline") and self.pipeline is not None:
+            if hasattr(self.pipeline, "step_next_frame"):
+                self.pipeline.step_next_frame()
+            else:
+                self.pipeline.is_paused = True
+                self.pipeline._step_once = True
+        elif hasattr(self, "loader") and self.loader is not None:
+            if hasattr(self.loader, "get_next_frame"):
+                self.loader.get_next_frame()
+            elif hasattr(self.loader, "get_next_sweep"):
+                self.loader.get_next_sweep()
+
+    def switch_dataset(self, mode: str):
+        """Switches dataset mode safely via pipeline or loader."""
+        if hasattr(self, "pipeline") and self.pipeline is not None and hasattr(self.pipeline, "switch_dataset"):
+            self.pipeline.switch_dataset(mode)
+        elif hasattr(self, "loader") and self.loader is not None and hasattr(self.loader, "switch_dataset"):
+            self.loader.switch_dataset(mode)
+        elif self.command_callback is not None:
+            self.set_dataset_mode(mode)
+
+    def seek_frame(self, target_frame: int):
+        """Seeks to target frame index safely."""
+        if hasattr(self, "pipeline") and self.pipeline is not None and hasattr(self.pipeline, "seek_frame"):
+            self.pipeline.seek_frame(target_frame)
+        elif hasattr(self, "loader") and self.loader is not None and hasattr(self.loader, "seek_frame"):
+            self.loader.seek_frame(target_frame)
+
+    async def handle_client_message(self, websocket, raw_message):
+        """
+        Processes client WebSocket commands with full exception guarding
+        so NO command can ever crash the connection task or container process.
+        """
+        try:
+            # 1. Parse JSON safely
+            if isinstance(raw_message, bytes):
+                data = json.loads(raw_message.decode("utf-8"))
+            elif isinstance(raw_message, dict):
+                data = raw_message
+            elif isinstance(raw_message, str):
+                try:
+                    data = json.loads(raw_message)
+                except json.JSONDecodeError:
+                    data = {"type": raw_message.strip().lower()}
+            else:
+                data = {"type": str(raw_message)}
+        except Exception as e:
+            logger.warning(f"[WS] Malformed incoming message: {e}")
+            return
+
+        msg_type = str(data.get("type") or data.get("action") or data.get("command") or "").strip().lower()
+
+        # 2. Safely route commands without throwing unhandled exceptions
+        try:
+            if msg_type == "ping":
+                await websocket.send(json.dumps({"type": "pong"}))
+
+            elif msg_type in ("pause", "playback_pause"):
+                self.is_paused = True
+                if hasattr(self, "pipeline") and self.pipeline is not None:
+                    self.pipeline.is_paused = True
+                logger.info("[WS] Telemetry paused by client.")
+
+            elif msg_type in ("resume", "play", "playback_resume", "playback_play"):
+                self.is_paused = False
+                if hasattr(self, "pipeline") and self.pipeline is not None:
+                    self.pipeline.is_paused = False
+                logger.info("[WS] Telemetry resumed by client.")
+
+            elif msg_type in ("toggle_pause", "pause_toggle"):
+                self.is_paused = not self.is_paused
+                if hasattr(self, "pipeline") and self.pipeline is not None:
+                    self.pipeline.is_paused = self.is_paused
+                logger.info(f"[WS] Telemetry pause toggled to: {self.is_paused}")
+
+            elif msg_type in ("next", "step_forward", "playback_next", "step"):
+                # Advance single frame safely
+                self.step_next_frame()
+                logger.info("[WS] Stepped to next frame.")
+
+            elif msg_type in ("set_dataset", "switch_dataset", "dataset_toggle"):
+                mode = data.get("mode") or data.get("dataset") or "static"
+                logger.info(f"[WS] Switching dataset mode to: {mode}")
+                self.switch_dataset(mode)
+
+            elif msg_type == "seek":
+                target_frame = data.get("frame", 0)
+                self.seek_frame(target_frame)
+                logger.info(f"[WS] Seek to frame: {target_frame}")
+
+            # Also invoke registered command_callback if any (e.g. speed adjustment or state sync)
+            if self.command_callback is not None:
+                try:
+                    if asyncio.iscoroutinefunction(self.command_callback):
+                        await self.command_callback(data)
+                    else:
+                        self.command_callback(data)
+                except Exception as cb_err:
+                    logger.warning(f"[WS] Command callback error: {cb_err}")
+
+        except Exception as e:
+            logger.error(f"[WS] Error executing command '{msg_type}': {e}", exc_info=True)
+            # Crucial: Send error notification back to client instead of crashing the server
+            try:
+                await websocket.send(json.dumps({"type": "error", "message": str(e)}))
+            except Exception:
+                pass
 
     async def _handler(self, websocket):
         """Registers new client connection and handles incoming messages/heartbeats."""
@@ -123,54 +238,7 @@ class TelemetryWebSocketServer:
         logger.info(f"[TelemetryServer]: client connected from {remote}. Active clients: {len(self.connected_clients)}")
         try:
             async for raw_message in websocket:
-                try:
-                    if isinstance(raw_message, bytes):
-                        raw_message = raw_message.decode("utf-8")
-                    if isinstance(raw_message, str):
-                        try:
-                            data = json.loads(raw_message)
-                        except json.JSONDecodeError:
-                            data = {"command": raw_message.strip().lower()}
-                    elif isinstance(raw_message, dict):
-                        data = raw_message
-                    else:
-                        data = {"command": str(raw_message)}
-
-                    msg_type = data.get("type") or data.get("action") or data.get("command")
-                    if msg_type == "ping" or (isinstance(raw_message, str) and raw_message.strip().lower() == "ping"):
-                        # Immediately reply with pong to keep Railway/reverse-proxy TCP connection alive during pause
-                        try:
-                            await websocket.send('{"type":"pong"}')
-                        except Exception:
-                            pass
-                        continue
-
-                    action = data.get("action") or data.get("command") or data.get("mode")
-
-                    # Acknowledge step / next / playback commands cleanly
-                    if action in ("next", "step"):
-                        logger.debug("[WebSocketServer] Stepping single frame")
-                    elif action in ("play", "resume", "pause"):
-                        logger.debug(f"[WebSocketServer] Playback set to {action}")
-                    elif "dataset" in data or "set_dataset" in data or action == "set_dataset":
-                        target_mode = data.get("dataset") or data.get("mode")
-                        if target_mode in ("static", "dynamic"):
-                            self.set_dataset_mode(target_mode)
-                        continue
-
-                    if self.command_callback is not None:
-                        try:
-                            if asyncio.iscoroutinefunction(self.command_callback):
-                                await self.command_callback(data)
-                            else:
-                                self.command_callback(data)
-                        except Exception as cmd_err:
-                            logger.warning(f"[WebSocketServer] Ignored non-fatal command callback error: {cmd_err}")
-
-                except json.JSONDecodeError:
-                    pass
-                except Exception as cmd_err:
-                    logger.warning(f"[WebSocketServer] Ignored non-fatal command error: {cmd_err}")
+                await self.handle_client_message(websocket, raw_message)
         except (
             websockets.exceptions.ConnectionClosed,
             getattr(websockets.exceptions, "ConnectionClosedOK", ConnectionResetError),
@@ -184,6 +252,26 @@ class TelemetryWebSocketServer:
         finally:
             self.connected_clients.discard(websocket)
             logger.info(f"[TelemetryServer]: client disconnected from {remote}. Active clients: {len(self.connected_clients)}")
+
+    async def broadcast_loop(self, payload_getter=None, target_fps: float = 20.0):
+        """
+        Safe broadcast loop that continues running and sleeping lightly when paused
+        to yield CPU and prevent proxy timeout without pushing frames.
+        """
+        while self._is_running:
+            if self.is_paused:
+                await asyncio.sleep(0.05)
+                continue
+
+            if payload_getter is not None:
+                try:
+                    payload = payload_getter()
+                    if payload and self.connected_clients:
+                        await self.broadcast(payload)
+                except Exception as e:
+                    logger.error(f"[WS] Error fetching broadcast payload: {e}")
+
+            await asyncio.sleep(1.0 / max(1.0, target_fps))
 
     _process_request = staticmethod(health_check_handler)
     client_handler = _handler

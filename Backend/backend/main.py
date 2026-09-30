@@ -231,8 +231,11 @@ class PerceptionPipeline:
 
         # Dynamic Playback Controls (HUD WebSocket listener)
         self.is_paused = False
+        self._step_once = False
         self.playback_speed = 1.0
         self.server.set_command_callback(self.handle_client_command)
+        self.server.pipeline = self
+        self.server.loader = self.loader
 
         # Metrics
         self.frame_count = 0
@@ -242,6 +245,72 @@ class PerceptionPipeline:
         self._last_vram_mb: Optional[float] = None
         self._warmed_up = False
 
+    def step_next_frame(self) -> None:
+        """Advances single frame safely without unhandled exception."""
+        self.is_paused = True
+        if hasattr(self, "server") and self.server:
+            self.server.is_paused = True
+        self._step_once = True
+        logger.info("[Perception] Stepping to next frame.")
+
+    def switch_dataset(self, mode: str) -> bool:
+        """
+        Hot-swaps active dataset mode ('static' or 'dynamic') cleanly
+        without setting file lists to empty or raising IndexError.
+        """
+        target_mode = "dynamic" if "dynamic" in str(mode).lower() else "static"
+        desc = (
+            "Clean Static Urban Road Corridor (Backend/data/static_corridor)"
+            if target_mode == "static"
+            else "Continuous Dynamic Multi-Object Tracking (Backend/data/dynamic_corridor)"
+        )
+        logger.info(f"[Perception] Switching dataset stream to: {desc} (mode: {target_mode})")
+
+        swapped = False
+        for attr_name in ['loader', 'dataset_loader', 'streamer', 'kaggle_streamer']:
+            loader_instance = getattr(self, attr_name, None)
+            if loader_instance is not None:
+                if hasattr(loader_instance, 'switch_dataset'):
+                    swapped = loader_instance.switch_dataset(target_mode)
+                    if swapped:
+                        self.dataset_dir = getattr(loader_instance, "data_dir", self.dataset_dir)
+                        break
+                elif hasattr(loader_instance, 'set_directory'):
+                    target_dir = resolve_sweep_directory(preferred_mode=target_mode)
+                    if target_dir and target_dir.exists():
+                        swapped = loader_instance.set_directory(str(target_dir))
+                        if swapped:
+                            self.dataset_dir = target_dir
+                            break
+
+        self.current_dataset_mode = target_mode
+        if hasattr(self, 'server') and self.server:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self.server.broadcast(json.dumps({
+                        "type": "dataset_swapped",
+                        "mode": target_mode,
+                        "description": desc
+                    }))
+                )
+            except RuntimeError:
+                pass
+        return swapped
+
+    def seek_frame(self, target_frame: int) -> None:
+        """Safely seeks to target frame index."""
+        logger.info(f"[Perception] Seeking to frame {target_frame}")
+        for attr_name in ['loader', 'dataset_loader']:
+            loader_instance = getattr(self, attr_name, None)
+            if loader_instance is not None:
+                if hasattr(loader_instance, 'seek_frame'):
+                    loader_instance.seek_frame(target_frame)
+                elif hasattr(loader_instance, 'files') and loader_instance.files:
+                    idx = max(0, min(int(target_frame), len(loader_instance.files) - 1))
+                    loader_instance.current_index = idx
+                    loader_instance.current_idx = idx
+
     def handle_client_command(self, cmd_data: dict) -> None:
         """
         Processes dynamic runtime control commands received from connected frontend HUD clients.
@@ -249,72 +318,50 @@ class PerceptionPipeline:
           - 'pause': Halts sweep progression without closing WebSocket or dropping client state
           - 'resume' / 'play': Resumes sweep loop execution
           - 'toggle_pause': Inverts current pause state
+          - 'next' / 'step': Steps forward a single frame
+          - 'set_dataset' / 'switch_dataset': Swaps active corridor mode
+          - 'seek': Seeks to frame index
           - 'set_speed': Scales frame pacing interval (e.g. 0.25x, 0.5x, 1.0x, 2.0x)
         """
         if not isinstance(cmd_data, dict):
             return
-        action = cmd_data.get("action") or cmd_data.get("command") or cmd_data.get("type")
-        if not action:
+        action = str(cmd_data.get("action") or cmd_data.get("command") or cmd_data.get("type") or "").lower().strip()
+        if not action or action in ("ping", "pong"):
             return
-        action = str(action).lower().strip()
-        if action in ("ping", "pong"):
-            return
-        if action == "pause":
-            self.is_paused = True
-            logger.info("Pipeline playback PAUSED via client command.")
-        elif action in ("resume", "play"):
-            self.is_paused = False
-            logger.info("Pipeline playback RESUMED via client command.")
-        elif action == "toggle_pause":
-            self.is_paused = not self.is_paused
-            logger.info(f"Pipeline playback pause toggled: {self.is_paused}")
-        elif action in ("next", "step"):
-            self.is_paused = True
-            self._step_once = True
-            logger.info("Pipeline playback single STEP requested via client command.")
-        elif action == "set_speed":
-            try:
-                speed = float(cmd_data.get("speed") or cmd_data.get("value", 1.0))
-                self.playback_speed = max(0.1, min(10.0, speed))
-                logger.info(f"Pipeline playback speed set to: {self.playback_speed:.2f}x")
-            except (ValueError, TypeError):
-                pass
-        elif action == "set_dataset":
-            data = cmd_data
-            target_mode = str(data.get("mode", "static")).lower()
-            target_dir = resolve_sweep_directory(preferred_mode=target_mode)
-            desc = (
-                "Clean Static Urban Road Corridor (Backend/data/static_corridor)"
-                if target_mode == "static"
-                else "Continuous Dynamic Multi-Object Tracking (Backend/data/dynamic_corridor)"
-            )
 
-            if target_dir and target_dir.exists():
-                logger.info(f"[Perception] Switching dataset stream to: {desc} ({target_dir})")
-                swapped = False
-                for attr_name in ['loader', 'dataset_loader', 'streamer', 'kaggle_streamer']:
-                    loader_instance = getattr(self, attr_name, None)
-                    if loader_instance and hasattr(loader_instance, 'set_directory'):
-                        swapped = loader_instance.set_directory(str(target_dir))
-                        break
-
-                if swapped:
-                    self.current_dataset_mode = target_mode
-                    self.dataset_dir = target_dir
-                    if hasattr(self, 'server') and self.server:
-                        try:
-                            loop = asyncio.get_running_loop()
-                            loop.create_task(
-                                self.server.broadcast(json.dumps({
-                                    "type": "dataset_swapped",
-                                    "mode": target_mode,
-                                    "description": desc
-                                }))
-                            )
-                        except RuntimeError:
-                            pass
-            else:
-                logger.warning(f"[Perception] Could not locate candidate directory for mode: {target_mode}")
+        try:
+            if action in ("pause", "playback_pause"):
+                self.is_paused = True
+                if hasattr(self, "server") and self.server:
+                    self.server.is_paused = True
+                logger.info("Pipeline playback PAUSED via client command.")
+            elif action in ("resume", "play", "playback_resume", "playback_play"):
+                self.is_paused = False
+                if hasattr(self, "server") and self.server:
+                    self.server.is_paused = False
+                logger.info("Pipeline playback RESUMED via client command.")
+            elif action in ("toggle_pause", "pause_toggle"):
+                self.is_paused = not self.is_paused
+                if hasattr(self, "server") and self.server:
+                    self.server.is_paused = self.is_paused
+                logger.info(f"Pipeline playback pause toggled: {self.is_paused}")
+            elif action in ("next", "step", "step_forward", "playback_next"):
+                self.step_next_frame()
+            elif action in ("set_dataset", "switch_dataset", "dataset_toggle"):
+                target_mode = str(cmd_data.get("mode") or cmd_data.get("dataset") or "static").lower()
+                self.switch_dataset(target_mode)
+            elif action == "seek":
+                target_frame = int(cmd_data.get("frame", 0))
+                self.seek_frame(target_frame)
+            elif action == "set_speed":
+                try:
+                    speed = float(cmd_data.get("speed") or cmd_data.get("value", 1.0))
+                    self.playback_speed = max(0.1, min(10.0, speed))
+                    logger.info(f"Pipeline playback speed set to: {self.playback_speed:.2f}x")
+                except (ValueError, TypeError):
+                    pass
+        except Exception as e:
+            logger.error(f"[Perception] Error handling client command '{action}': {e}", exc_info=True)
 
     def warmup(self, frames: int = 2, sample_points: Optional[np.ndarray] = None) -> None:
         """Pre-warms pipeline buffers, JIT compilations, and model inference sessions in memory."""
@@ -746,10 +793,11 @@ class PerceptionPipeline:
 
         try:
             while self.is_running:
-                if self.is_paused:
+                if self.is_paused or getattr(self.server, "is_paused", False):
                     if getattr(self, "_step_once", False):
                         self._step_once = False
                     else:
+                        # Sleep lightly to yield CPU and prevent proxy timeout without pushing frames
                         await asyncio.sleep(0.05)
                         continue
 
@@ -772,19 +820,24 @@ class PerceptionPipeline:
 
                         # Offload heavy perception compute to thread pool
                         frame_result = await asyncio.to_thread(self.process_frame, pts, timestamp=ts, meta=meta)
-                        if frame_result and "payload" in frame_result:
+                        if frame_result and "payload" in frame_result and self.server.connected_clients:
                             await self.server.broadcast(frame_result["payload"])
                         await asyncio.sleep(0.01)  # Explicitly yield control to socket event loop
                     except asyncio.TimeoutError:
                         continue
+                    except Exception as frame_err:
+                        logger.error(f"[Perception] Error in queue frame cycle: {frame_err}", exc_info=True)
                 else:
-                    active_files = (
-                        self.dataset_loader.files
-                        if (getattr(self, "dataset_loader", None) and self.dataset_loader.files)
-                        else sweep_files
-                    )
-                    if active_files:
-                        current_file = active_files[sweep_idx % len(active_files)]
+                    pts = None
+                    if getattr(self, "dataset_loader", None) and self.dataset_loader.files:
+                        try:
+                            pts = self.dataset_loader.get_next_sweep()
+                        except Exception as e:
+                            logger.warning(f"Error getting next sweep from dataset loader: {e}")
+                            pts = None
+
+                    if pts is None and sweep_files:
+                        current_file = sweep_files[sweep_idx % len(sweep_files)]
                         sweep_idx += 1
                         try:
                             raw = np.fromfile(current_file, dtype=np.float32)
@@ -796,14 +849,18 @@ class PerceptionPipeline:
                                 pts = raw.reshape(-1, 3)
                         except Exception as e:
                             logger.warning(f"Error reading sweep {current_file}: {e}")
-                            pts = _generate_live_sensor_buffer(self.frame_count, dt=self.dt)
-                    else:
+                            pts = None
+
+                    if pts is None:
                         pts = _generate_live_sensor_buffer(self.frame_count, dt=self.dt)
 
-                    # Offload heavy perception compute to thread pool
-                    frame_result = await asyncio.to_thread(self.process_frame, pts, timestamp=time.time())
-                    if frame_result and "payload" in frame_result:
-                        await self.server.broadcast(frame_result["payload"])
+                    try:
+                        # Offload heavy perception compute to thread pool
+                        frame_result = await asyncio.to_thread(self.process_frame, pts, timestamp=time.time())
+                        if frame_result and "payload" in frame_result and self.server.connected_clients:
+                            await self.server.broadcast(frame_result["payload"])
+                    except Exception as frame_err:
+                        logger.error(f"[Perception] Error in perception cycle: {frame_err}", exc_info=True)
                     await asyncio.sleep(0.01)  # Explicitly yield control to socket event loop
 
 
