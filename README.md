@@ -26,6 +26,7 @@
 ## 📑 Table of Contents
 
 - [Executive Overview & Mission Statement](#-executive-overview--mission-statement)
+- [How the System Works (End-to-End Pipeline)](#-how-the-system-works-end-to-end-pipeline)
 - [Tactical Spatial Envelope Visualizer](#-tactical-spatial-envelope-visualizer)
 - [3-Tier Defense Colormap Contract](#-3-tier-defense-colormap-contract)
 - [Core Capabilities & Architectural Pillars](#-core-capabilities--architectural-pillars)
@@ -56,6 +57,51 @@ Dense Raw Point Cloud (50k+ pts)  ──►  Statistical Dust & Atmospheric Filt
                                  ──►  10 MB WebSocket Broadcast @ >= 25 Hz (< 0.8 ms)
                                  ──►  Three.js InstancedMesh WebGL 3-Tier Defense HUD
 ```
+
+---
+
+## ⚙️ How the System Works (End-to-End Pipeline)
+
+DRISHTI-2.5D operates as an end-to-end real-time autonomous perception pipeline connecting raw sensor sweeps to an interactive 3D WebGL tactical cockpit over a low-latency WebSocket connection:
+
+### 1. Ingestion & Pre-Processing Layer
+- **Point Cloud Ingestion (`dataset_loader.py`)**: Ingests dense automotive LiDAR sweeps (50k to 120k points per frame from datasets such as nuScenes).
+- **Tactical Spatial Envelope (`config.py`)**: Restricts spatial calculations to an active envelope ($+50.0\text{ m}$ forward stopping margin, $-20.0\text{ m}$ rear reversing buffer, $\pm 15.0\text{ m}$ lateral shoulder). Points falling outside are pruned in memory before spatial tree construction.
+- **Statistical Dust & Atmospheric Filter (`dust_filter.py`)**: Rejects airborne scatter, smoke, vehicle exhaust, and sparse noise returns by filtering out sub-cells containing fewer than 3 points ($N < 3$), preventing phantom obstacle detection.
+
+### 2. Geometric Segmentation & Hazard Intelligence
+- **Planar Ground Segmentation (`ground_segmentation.py`)**: Evaluates drivable roadbeds using planar bounds ($Z \in [-2.20\text{ m}, -1.25\text{ m}]$), vertical variance ($\Delta Z \le 0.18\text{ m}$), and chassis floor clearance ($Z_{\text{max}} \le -1.15\text{ m}$). Cells that meet these criteria are locked strictly to **$\text{Cost} = 0$** (Traversable Green).
+- **Thin Hazard Detection (`thin_hazard_detector.py`)**: Uses local eigenvalue analysis and height-gradient profiling (ThreatNet1D) to identify low-profile surface threats (spike strips, severed cables, potholes) that standard ground segmenters would otherwise smooth over.
+- **Negative Obstacle & Trench Gating (`negative_obstacles.py`)**: Analyzes laser shadow geometry and radial beam drop-offs. If missing returns represent a severe downward step ($\Delta Z < -0.30\text{ m}$), the gap is classified as a lethal drop-off rather than free traversable space.
+
+### 3. Adaptive 2.5D Quadtree Engine (`quadtree.py`, `costmap.py`)
+- **Variable-Resolution Spatial Decomposition**: Rather than allocating a rigid, memory-heavy 3D voxel grid, the scene is decomposed into a 2.5D Quadtree:
+  - **Coarse Cells ($2.0\text{ m} \times 2.0\text{ m}$)**: Represent wide, flat road areas with a single node, compressing RAM by $> 95\%$.
+  - **Medium Cells ($1.0\text{ m} \times 1.0\text{ m}$)**: Represent road shoulders and gentle transitions.
+  - **Fine Leaves ($0.25\text{ m} \times 0.25\text{ m}$)**: Subdivided recursively around obstacle boundaries, curbs, and hazards.
+- **3-Tier Defense Costmap**: Classifies every cell into one of three unambiguous tactical tiers:
+  - 🟩 **Tier 1 (Safe Road)**: $\text{Cost } 0 - 50$ (Strict Emerald `#238636`, height $0.04\text{ m}$)
+  - 🟨 **Tier 2 (Caution Gap / Slopes)**: $\text{Cost } 51 - 180$ (Solar Amber `#D29922`, height $0.10\text{ m}$)
+  - 🟥 **Tier 3 (Lethal Obstacles / Vehicles / Trenches)**: $\text{Cost } 181 - 255$ (Tactical Crimson `#F85149`, height $0.20\text{ m}$)
+
+### 4. Dynamic Object Tracking & Future Rollout (`kalman_tracker.py`, `clustering.py`)
+- **DBSCAN Point Clustering**: Groups non-ground obstacle returns into distinct object instances.
+- **2D Extended Kalman Filter**: Tracks dynamic objects across successive frames, calculating linear velocity vectors and heading orientations.
+- **Trajectory Rollout (`trajectory_rollout.py`)**: Extrapolates future hazard cones ($1\text{s}$, $2\text{s}$, $3\text{s}$) to predict potential collision paths with the ego-vehicle.
+
+### 5. Asynchronous Streaming Server (`websocket_server.py`, `payload_builder.py`)
+- **Ultra-Fast Serialization**: Encodes up to 10,000 active quadtree cells, 3D tracked bounding boxes, and ego-telemetry into compressed JSON using `orjson`.
+- **Non-Blocking Execution**: Computations are offloaded via `asyncio.to_thread` so the WebSocket event loop maintains sub-millisecond I/O response times.
+- **Bi-Directional Command Protocol**: Accepts client commands to Pause, Resume, Step Next Frame, change playback speeds ($0.25\times$ to $2.0\times$), and hot-swap between Static and Dynamic datasets.
+- **Reverse Proxy Keep-Alive**: 10-second client-server heartbeat pings prevent edge timeouts on cloud hosting providers (e.g., Railway, Render).
+
+### 6. Hardware-Accelerated Tactical WebGL Cockpit (`Frontend/`)
+- **Instanced GPU Rendering (`Scene.js`)**: Employs Three.js `InstancedMesh` with a 12,000-instance capacity to render thousands of dynamic quadtree tiles in a single draw call at a smooth 60 FPS.
+- **Dual-Mode Visualizer Modes**:
+  1. *Spectral Elevation*: Sensor calibration mode rendering raw LiDAR returns colored by height.
+  2. *2.5D Adaptive Mapping*: Tactical mode displaying the 3-tier defense traversability tiles.
+  3. *Semantic Hazard Intelligence*: Enhanced tactical mode combining tiles with 3D tracked bounding boxes and projected trajectory cones.
+- **Tactical Camera & Controls**: Switchable between Perspective Orbit, Overhead Orthographic Top-Down, and Ego Chase Cam, complete with live SLA metrics (FPS, Latency, Memory, Active Cells).
 
 ---
 
