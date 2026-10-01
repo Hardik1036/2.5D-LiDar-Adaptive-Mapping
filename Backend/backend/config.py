@@ -46,11 +46,11 @@ DATASET_DIR = DEFAULT_DATASET_DIR
 class MapBounds:
     """Operational 3D bounding box for LiDAR perception (meters)."""
     X_MIN: float = -20.0   # 20 meters behind sensor
-    X_MAX: float = 50.0    # 50 meters forward look-ahead
-    Y_MIN: float = -15.0   # 15 meters left
-    Y_MAX: float = 15.0    # 15 meters right
-    Z_MIN: float = -2.50   # Ditch / drop-off floor
-    Z_MAX: float = 2.0     # Ceiling clearance
+    X_MAX: float = 100.0   # 100 meters forward look-ahead (Perception envelope)
+    Y_MIN: float = -50.0   # 50 meters left
+    Y_MAX: float = 50.0    # 50 meters right
+    Z_MIN: float = -3.00   # Ditch / drop-off floor
+    Z_MAX: float = 5.00    # Ceiling clearance
 
     @property
     def x_range(self) -> float:
@@ -98,11 +98,49 @@ class QuadtreeConfig:
     # Adaptive subdivision criteria:
     # Subdivide if internal point height variance > TAU_SIGMA or delta_z > TAU_Z
     TAU_SIGMA: float = 0.08          # Variance threshold (m^2)
-    TAU_Z: float = 0.22              # Step height / elevation delta threshold (m, chassis clearance limit)
+    TAU_Z: float = 0.18              # Step height / elevation delta threshold (m, PS 26053 standard)
     
     # Minimum point count required in a node to justify subdivision
     MIN_POINTS_PER_CELL: int = 3
     # Max depth calculated dynamically based on coarse -> fine resolutions
+
+
+@dataclass(frozen=True)
+class FoveatedConfig:
+    """
+    PS 26053 Hybrid Hierarchical Foveated Spatial Index Specification:
+    - Zone 1: [0, 10 m)   -> exact 0.05 m
+    - Zone 2: [10, 25 m)  -> exact 0.10 m
+    - Zone 3: [25, 50 m)  -> exact 0.25 m
+    - Zone 4: [50, 100 m] -> exact 0.50 m
+    - Radial perception envelope: r <= 100 m
+    """
+    MAX_RADIAL_RANGE: float = 100.0
+
+    # Zone 1
+    ZONE1_R_MIN: float = 0.0
+    ZONE1_R_MAX: float = 10.0
+    ZONE1_RES: float = 0.05
+
+    # Zone 2
+    ZONE2_R_MIN: float = 10.0
+    ZONE2_R_MAX: float = 25.0
+    ZONE2_RES: float = 0.10
+
+    # Zone 3
+    ZONE3_R_MIN: float = 25.0
+    ZONE3_R_MAX: float = 50.0
+    ZONE3_RES: float = 0.25
+
+    # Zone 4
+    ZONE4_R_MIN: float = 50.0
+    ZONE4_R_MAX: float = 100.0
+    ZONE4_RES: float = 0.50
+
+    # Refinement triggers
+    TAU_SIGMA_SQ: float = 0.08  # sigma^2 > 0.08 m^2
+    TAU_DELTA_Z: float = 0.18   # Delta Z > 0.18 m
+
 
 
 @dataclass(frozen=True)
@@ -335,6 +373,7 @@ class PointPillarsConfig:
 # Global instances
 BOUNDS = SpatialBounds()
 QUADTREE = QuadtreeConfig()
+FOVEATED = FoveatedConfig()
 COSTMAP = CostmapConfig()
 GROUND_SEG = GroundSegmentationConfig()
 TRACKING = TrackingConfig()
@@ -349,6 +388,7 @@ POINT_PILLARS = PointPillarsConfig.from_yaml()
 MAP_BOUNDS = BOUNDS
 SPATIAL_BOUNDS = BOUNDS
 QUADTREE_CONFIG = QUADTREE
+FOVEATED_CONFIG = FOVEATED
 COSTMAP_CONFIG = COSTMAP
 TRACKING_CONFIG = TRACKING
 WEBSOCKET_CONFIG = CONFIG

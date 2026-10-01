@@ -8,6 +8,7 @@ export default function Header({
   onSettings,
   isManuallyDisconnected,
   onToggleBackend,
+  summary,
 }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -16,6 +17,9 @@ export default function Header({
   }, []);
 
   const isConnected = !isManuallyDisconnected && (status === "live" || status === "connected");
+  const modelStatus = summary?.frame?.model_status || summary?.stats?.model_status;
+  const segStatus = modelStatus?.segmentation || "MODEL NOT LOADED";
+  const detStatus = modelStatus?.detection || "MODEL NOT LOADED";
 
   const stateClass = isManuallyDisconnected
     ? "standby"
@@ -31,12 +35,14 @@ export default function Header({
     page === "playback"
       ? `FEED: ${status.toUpperCase()}`
       : isManuallyDisconnected
-        ? "○ STANDBY (OFFLINE)"
+        ? "🟡 SIMULATION"
         : isConnected
-          ? "● CONNECTED"
+          ? "🟢 LIVE BACKEND"
           : status === "connecting"
             ? "CONNECTING"
-            : connectionState || "DISCONNECTED";
+            : status === "simulated"
+              ? "🟡 SIMULATION"
+              : connectionState || "DISCONNECTED";
 
   return (
     <header className="premium-header">
@@ -97,8 +103,18 @@ export default function Header({
               {!isManuallyDisconnected && !isConnected && <span />}
               {stateLabel}
               {(status === "simulated" || isManuallyDisconnected) && page !== "playback" && (
-                <span className="sim-badge" aria-hidden="true">
-                  SIM
+                <>
+                  <span className="sim-badge" aria-hidden="true">
+                    SIM
+                  </span>
+                  <span style={{ fontSize: "11px", color: "#d29922", marginLeft: "6px", fontWeight: "600" }}>
+                    Accuracy: N/A
+                  </span>
+                </>
+              )}
+              {isConnected && page !== "playback" && (
+                <span style={{ fontSize: "11px", color: "#8b949e", marginLeft: "8px", fontFamily: "monospace" }}>
+                  [{segStatus.includes("LOADED") && !segStatus.includes("NOT") ? "SalsaNext: LOADED" : "Seg: MODEL NOT LOADED"} | {detStatus.includes("LOADED") && !detStatus.includes("NOT") ? "PointPillars: LOADED" : "Det: MODEL NOT LOADED"}]
                 </span>
               )}
             </div>

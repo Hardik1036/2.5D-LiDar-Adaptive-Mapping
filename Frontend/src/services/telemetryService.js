@@ -304,21 +304,22 @@ function makeSimulation() {
       timestamp: Date.now(),
       frame_id: id++,
       system_status: "SIMULATED",
+      mode: "SIMULATION",
+      model_status: {
+        segmentation: "MODEL NOT LOADED",
+        detection: "MODEL NOT LOADED",
+        device: null,
+        segmentation_model: null,
+        detection_model: null,
+      },
       system_stats: {
         fps: dt > 0 ? Math.min(25, 1000 / dt) : 25,
         latency_ms: performance.now() - begin,
         active_cells: cells.length,
         ram_mb: memory,
-        tracking_accuracy: +(
-          88.0 +
-          Math.sin(t * 0.4) * 9.5 +
-          (Math.random() - 0.5) * 1.0
-        ).toFixed(1),
-        accuracy: +(
-          88.0 +
-          Math.sin(t * 0.4) * 9.5 +
-          (Math.random() - 0.5) * 1.0
-        ).toFixed(1),
+        tracking_accuracy: null,
+        accuracy: null,
+        ground_truth_status: "GROUND TRUTH NOT AVAILABLE",
       },
       cells,
       dynamic_objects,

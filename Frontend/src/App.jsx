@@ -74,6 +74,7 @@ export default function App() {
         onSettings={() => setSettings(true)}
         isManuallyDisconnected={telemetry.isManuallyDisconnected}
         onToggleBackend={telemetry.toggleBackend}
+        summary={telemetry.summary}
       />
       {page === "welcome" ? (
         <Welcome onLaunch={() => navigate("live")} />

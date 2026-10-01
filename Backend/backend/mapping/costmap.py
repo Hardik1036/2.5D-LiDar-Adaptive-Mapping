@@ -14,11 +14,39 @@ from backend.config import COSTMAP
 from backend.mapping.quadtree import QuadtreeNode
 
 
-class CostmapEvaluator:
+def compute_multifactor_traversability(
+    delta_z: float,
+    slope_deg: float,
+    variance: float,
+    s_class: float = 0.0,
+    s_drop: float = 0.0,
+    alpha: float = 80.0,
+    beta: float = 60.0,
+    gamma: float = 40.0,
+    z_crit: float = 0.20,
+    theta_crit: float = 25.0,
+    sigma_sq_crit: float = 0.05,
+) -> int:
     """
-    Evaluates terrain traversability costs for 2.5D quadtree leaf cells.
-    """
+    PS 26053 Multi-Factor Traversability Computation:
+    T = clip(alpha * (delta_z / Zcrit) + beta * (theta / theta_crit) + gamma * (sigma^2 / sigma^2_crit) + S_class + S_drop, 0, 255)
 
+    Selected weights and critical thresholds:
+    - alpha = 80.0 (step height contribution up to 80 at Zcrit)
+    - beta = 60.0 (slope contribution up to 60 at theta_crit)
+    - gamma = 40.0 (roughness/variance contribution up to 40 at sigma^2_crit)
+    - Zcrit = 0.20 m
+    - theta_crit = 25.0 degrees
+    - sigma^2_crit = 0.05 m^2
+    """
+    term_step = alpha * (float(delta_z) / max(z_crit, 1e-6))
+    term_slope = beta * (float(slope_deg) / max(theta_crit, 1e-6))
+    term_roughness = gamma * (float(variance) / max(sigma_sq_crit, 1e-6))
+    raw_cost = term_step + term_slope + term_roughness + float(s_class) + float(s_drop)
+    return int(np.clip(raw_cost, 0, 255))
+
+
+class CostmapEvaluator:
     def __init__(
         self,
         safe_max: int = COSTMAP.SAFE_MAX,

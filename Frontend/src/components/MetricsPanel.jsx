@@ -107,6 +107,38 @@ export default function MetricsPanel({ summary, status, options }) {
             </div>
           </section>
         )}
+      <section className="metric-section">
+        <div className="label-row">
+          <h3>Perception Engine</h3>
+          <span className="section-mark">ENGINE</span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "11px", padding: "4px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#8b949e" }}>Mode</span>
+            <strong style={{ color: summary?.frame?.mode === "LIVE_DL" ? "#3fb950" : summary?.frame?.mode === "LIVE_GEOMETRIC_FALLBACK" ? "#d29922" : summary?.frame?.mode === "MODEL NOT LOADED" ? "#f85149" : "#58a6ff" }}>
+              {summary?.frame?.mode || (status === "live" ? (summary?.frame?.model_status?.segmentation === "LOADED" ? "LIVE_DL" : "MODEL NOT LOADED") : "SIMULATION")}
+            </strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#8b949e" }}>Segmentation</span>
+            <span style={{ fontFamily: "monospace", color: (summary?.frame?.model_status?.segmentation || "").includes("LOADED") && !(summary?.frame?.model_status?.segmentation || "").includes("NOT") ? "#3fb950" : "#f85149" }}>
+              {summary?.frame?.model_status?.segmentation || "MODEL NOT LOADED"}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#8b949e" }}>3D Detection</span>
+            <span style={{ fontFamily: "monospace", color: (summary?.frame?.model_status?.detection || "").includes("LOADED") && !(summary?.frame?.model_status?.detection || "").includes("NOT") ? "#3fb950" : "#d29922" }}>
+              {summary?.frame?.model_status?.detection || "MODEL NOT LOADED (DBSCAN)"}
+            </span>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#8b949e" }}>Ground Truth</span>
+            <span style={{ color: "#8b949e", fontStyle: "italic" }}>
+              {summary?.frame?.system_stats?.ground_truth_status || "GROUND TRUTH NOT AVAILABLE"}
+            </span>
+          </div>
+        </div>
+      </section>
       <section className="reference-badge">
         <h3>Reference benchmark</h3>
         <p>

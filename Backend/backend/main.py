@@ -79,12 +79,19 @@ from backend.mapping.porosity_filter import PorosityClassifier
 from backend.mapping.quadtree import AdaptiveQuadtree
 from backend.mapping.temporal_blender import TemporalMapBlender
 from backend.mapping.vegetation_filter import VegetationFilter
+from backend.mapping.memory_benchmark import (
+    compute_theoretical_reduction,
+    measure_process_rss_mib,
+    measure_spatial_index_mapping_memory_mib,
+    run_empirical_memory_benchmark,
+)
 from backend.server.payload_builder import PayloadBuilder
 from backend.server.websocket_server import TelemetryWebSocketServer
 from backend.telemetry.telemetry_db import AsyncTelemetryDB
 from backend.tracking.clustering import EuclideanClusterer
 from backend.tracking.ghost_clearing import GhostClearing
 from backend.tracking.kalman_tracker import KalmanTracker
+from backend.tracking.object_detector import ObjectDetector3D, exclude_dynamic_points_from_elevation
 from backend.tracking.trajectory_rollout import TrajectoryRollout
 
 # Configure logging
@@ -421,6 +428,7 @@ class PerceptionPipeline:
         points: np.ndarray,
         timestamp: Optional[float] = None,
         meta: Optional[Dict[str, Any]] = None,
+        frame_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Primary entry point for live point cloud ingestion.
@@ -430,6 +438,7 @@ class PerceptionPipeline:
             points: [N, 3], [N, 4], or [N, 5] numpy float array of LiDAR coordinates.
             timestamp: Sensor acquisition timestamp in seconds (defaults to current time).
             meta: Optional metadata dictionary (e.g. semantic labels, dynamic detections).
+            frame_id: Optional frame index for tracking and telemetry logging.
 
         Returns:
             Dictionary containing processed frame results, leaves, tracks, and telemetry.
@@ -439,8 +448,11 @@ class PerceptionPipeline:
             timestamp = time.time()
         if meta is None:
             meta = {}
-
-        self.frame_count += 1
+        if frame_id is not None:
+            self.frame_idx = frame_id
+            self.frame_count = frame_id
+        else:
+            self.frame_count += 1
 
         # Ego-motion clearing: completely reset local quadtree and temporal terrain memory
         # to prevent stationary roadside objects from smearing/streaking in sensor frame
@@ -507,14 +519,18 @@ class PerceptionPipeline:
         threat_points = ground_points[threat_mask]
         t_ml = (time.perf_counter() - t_ml_start) * 1000.0
 
+        # Dynamic Point Exclusion (PS 26053 Step 4.3): exclude confirmed dynamic tracks before cell stats
+        confirmed_dyn = self.tracker.get_dynamic_tracks()
+        elevation_points = exclude_dynamic_points_from_elevation(clean_points, confirmed_dyn)
+
         # 6. Adaptive 2.5D Quadtree construction
         t_quad_start = time.perf_counter()
-        point_costs = np.zeros(len(clean_points), dtype=np.int32)
-        if len(threat_points) > 0:
+        point_costs = np.zeros(len(elevation_points), dtype=np.int32)
+        if len(threat_points) > 0 and len(elevation_points) == len(clean_points):
             ground_indices = np.nonzero(semantic_labels == 0)[0]
             point_costs[ground_indices[threat_mask]] = 255
 
-        leaves = self.quadtree.build(clean_points, point_costs=point_costs)
+        leaves = self.quadtree.build(elevation_points, point_costs=point_costs)
         leaves = self.quadtree.interpolate_ground_rings()
         # leaves = self.quadtree.interpolate_obstacle_clusters()  # Bypassed: map only real physical obstacle returns
         leaves = self.quadtree.apply_clearance_coarsening()
@@ -634,9 +650,121 @@ class PerceptionPipeline:
         quadtree_ram_mb = tree_stats.get("ram_mb", self.quadtree.get_memory_footprint_mb())
         ground_inlier_ratio = round(len(ground_pts) / max(len(clean_points), 1), 3)
 
+        # Monotonic latency stages (Section 8.7)
+        input_ingestion_ms = round(t_ingest, 2)
+        preprocessing_ms = round(t_dust + t_seg, 2)
+        semantic_segmentation_inference_ms = round(t_ml, 2) if self.ml_adapter.salsa_session is not None else 0.0
+        mapping_ms = round(t_quad + t_trench + t_blend + t_cost, 2)
+        three_d_detection_ms = round(t_thin, 2) # Including ThinHazard as 3D detection for now, + pointpillars later
+        tracking_ms = round(t_track + t_roll, 2)
+        output_construction_ms = round(t_ros + t_db, 2)
+        
+        sum_measured = t_ingest + t_dust + t_seg + t_ml + t_quad + t_trench + t_blend + t_cost + t_track + t_roll + t_ros + t_db + t_thin
+        other_pipeline_overhead_ms = max(0.0, round(total_latency_ms - sum_measured, 2))
+
+        # Memory accounting separation (Section 8.3 - 8.6)
+        mapping_memory_mib = measure_spatial_index_mapping_memory_mib(self.quadtree)
+        process_rss_mib = measure_process_rss_mib()
+        uni_theo_mib, adap_theo_mib, theo_red_pct = compute_theoretical_reduction(BOUNDS, len(leaves))
+
+        # Runtime mode determination (Section 1.3)
+        if getattr(self, "_is_simulation", False) or (meta and meta.get("is_simulation", False)):
+            runtime_mode = "SIMULATION"
+        elif self.ml_adapter.salsa_session is not None:
+            runtime_mode = "LIVE_DL"
+        else:
+            runtime_mode = "LIVE_GEOMETRIC_FALLBACK"
+
+        # Empirical Uniform-vs-Adaptive benchmark on identical sweep (PS 26053 Item 2)
+        if len(clean_points) > 0:
+            emp_res = run_empirical_memory_benchmark(clean_points, bounds=BOUNDS, warm_up=False, repetitions=1)
+            uniform_measured_mib = emp_res.uniform_5cm_measured_mapping_memory_mib
+            adaptive_measured_mib = emp_res.adaptive_measured_mapping_memory_mib
+            emp_reduction_pct = emp_res.measured_reduction_percent
+        else:
+            uniform_measured_mib = None
+            adaptive_measured_mib = None
+            emp_reduction_pct = None
+
+        model_status_dict = self.ml_adapter.get_model_status()
+
         system_stats: Dict[str, Any] = {
+            # Targets vs Measured
+            "target_fps": 33,
+            "target_latency_ms": 30,
+            "actual_fps": round(self.rolling_fps, 1),
+            "total_latency_ms": round(self.rolling_latency_ms, 2),
             "fps": round(self.rolling_fps, 1),
             "latency_ms": round(self.rolling_latency_ms, 2),
+
+            # Latency stages
+            "input_ingestion_ms": input_ingestion_ms,
+            "preprocessing_ms": preprocessing_ms,
+            "semantic_segmentation_inference_ms": semantic_segmentation_inference_ms,
+            "inference_ms": semantic_segmentation_inference_ms,  # alias for backwards compatibility
+            "mapping_ms": mapping_ms,
+            "3d_detection_ms": three_d_detection_ms,
+            "tracking_ms": tracking_ms,
+            "output_construction_ms": output_construction_ms,
+            "other_pipeline_overhead_ms": other_pipeline_overhead_ms,
+            
+            "profiling_breakdown": {
+                "input_ingestion_ms": input_ingestion_ms,
+                "preprocessing_ms": preprocessing_ms,
+                "semantic_segmentation_inference_ms": semantic_segmentation_inference_ms,
+                "mapping_ms": mapping_ms,
+                "3d_detection_ms": three_d_detection_ms,
+                "tracking_ms": tracking_ms,
+                "output_construction_ms": output_construction_ms,
+                "other_pipeline_overhead_ms": other_pipeline_overhead_ms,
+            },
+
+            # Performance verification vs attainment separation (PS 26053 Items 6 & 9)
+            "performance_measurement": {
+                "status": "VERIFIED",
+                "method": "Stage-wise monotonic microsecond timers",
+            },
+            "performance_target": {
+                "status": "NOT_MET_ON_CURRENT_CPU",
+                "target_latency_ms": 30.0,
+                "target_fps": 33.0,
+                "measured_cpu_latency_ms": round(self.rolling_latency_ms, 2),
+                "measured_cpu_fps": round(self.rolling_fps, 1),
+                "cuda_status": model_status_dict.get("cuda_execution_provider", "NOT_AVAILABLE"),
+                "note": "The current CPU implementation does not meet the PS 26053 latency/throughput target. GPU/CUDA/TensorRT acceleration should be benchmarked as the next optimisation path.",
+            },
+
+            # Memory metrics (binary MiB) & Scope (PS 26053 Items 1 & 5)
+            "mapping_memory_mib": round(mapping_memory_mib, 2),
+            "ram_mb": round(mapping_memory_mib, 2),
+            "mapping_memory_target_mib": 15.0,
+            "mapping_memory_target_status": "PASS" if mapping_memory_mib < 15.0 else "FAIL",
+            "process_rss_mib": round(process_rss_mib, 2),
+            "process_rss_scope": "informational only; not mapping memory",
+            "model_file_size_mib": 7.36 if self.ml_adapter.salsa_session is not None else None,
+            "model_runtime_memory_mib": "NOT_ISOLATED" if self.ml_adapter.salsa_session is not None else None,
+            "model_memory_mib": None,  # Runtime model memory cannot be safely isolated from process RSS
+            "gpu_vram_mib": self._last_vram_mb,
+
+            # Theoretical reduction (Full-domain baseline: 120m x 100m @ 0.05m = 219.73 MiB)
+            "uniform_5cm_full_domain_theoretical_memory_mib": round(uni_theo_mib, 2),
+            "uniform_5cm_theoretical_mib": round(uni_theo_mib, 2),
+            "adaptive_theoretical_mib": round(adap_theo_mib, 2),
+            "theoretical_reduction_percent": round(theo_red_pct, 1),
+
+            # Empirical benchmark (PS 26053 Items 1 & 2: Occupied-cell implementation memory)
+            "uniform_5cm_empirical_occupied_mapping_memory_mib": uniform_measured_mib,
+            "uniform_5cm_measured_mapping_memory_mib": uniform_measured_mib,
+            "adaptive_empirical_mapping_memory_mib": adaptive_measured_mib,
+            "adaptive_measured_mapping_memory_mib": adaptive_measured_mib,
+            "empirical_memory_reduction_percent": emp_reduction_pct,
+            "measured_reduction_percent": emp_reduction_pct,
+
+            # Ground truth integrity (Section 1.2 & 13)
+            "tracking_accuracy": None,
+            "ground_truth_status": "GROUND TRUTH NOT AVAILABLE",
+
+            # Legacy compatibility fields
             "system_status": health_info["system_status"],
             "sensor_health": health_info["status"],
             "degraded_quadrants": health_info["degraded_quadrants"],
@@ -644,8 +772,8 @@ class PerceptionPipeline:
             "ground_points": len(ground_pts),
             "obstacle_points": len(obstacle_pts),
             "ground_inlier_ratio": ground_inlier_ratio,
-            "ram_mb": quadtree_ram_mb,
             "cell_count": len(leaves),
+            "active_cells": len(leaves),
             "safe_cells": safe_count,
             "caution_cells": caution_count,
             "hazard_cells": hazard_count,
@@ -671,15 +799,13 @@ class PerceptionPipeline:
                 "costmap": round(t_cost, 2),
                 "ros": round(t_ros, 2),
                 "db": round(t_db, 2),
-            }
+            },
+            "mode": runtime_mode,
+            "model_status": model_status_dict,
         }
 
-        # Dynamic Perception Fidelity reflecting ground inliers & Kalman innovation
-        system_stats["tracking_accuracy"] = self.payload_builder.compute_tracking_accuracy(
-            active_tracks, system_stats, leaves
-        )
-
         # 15. Serialize & Broadcast over WebSocket
+        t_ser_start = time.perf_counter()
         payload = self.payload_builder.build_payload(
             frame_id=self.frame_count,
             timestamp=timestamp,
@@ -689,7 +815,13 @@ class PerceptionPipeline:
             hazard_cones=hazard_cones,
             parked_car_clusters=parked_car_clusters,
             raw_points=clean_points,
+            mode=runtime_mode,
+            model_status=model_status_dict,
         )
+        t_ser = (time.perf_counter() - t_ser_start) * 1000.0
+        system_stats["serialization_ms"] = round(t_ser, 2)
+        system_stats["breakdown_ms"]["serialization"] = round(t_ser, 2)
+
         if not self.is_running:
             self.server.broadcast_nowait(payload)
 
@@ -746,6 +878,7 @@ class PerceptionPipeline:
             "thin_hazards": thin_hazards,
             "dropoffs": dropoffs,
             "stats": system_stats,
+            "system_stats": system_stats,
             "payload": payload,
             "ros_grid": ros_occupancy_grid,
         }
@@ -1020,6 +1153,7 @@ def main():
 
 
 DRISHTIPerceptionPipeline = PerceptionPipeline
+DrishtiEngine = PerceptionPipeline
 
 
 if __name__ == "__main__":

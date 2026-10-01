@@ -30,6 +30,44 @@ class QuadtreeNode:
     semantic_cost: int = 0
     is_obstacle: bool = False
     is_hazard: bool = False
+    cell_id: Optional[str] = None
+    zone: int = 1
+    _x_min: Optional[float] = None
+    _x_max: Optional[float] = None
+    _y_min: Optional[float] = None
+    _y_max: Optional[float] = None
+
+    @property
+    def x_min(self) -> float:
+        return self._x_min if self._x_min is not None else (self.x - self.size * 0.5)
+
+    @x_min.setter
+    def x_min(self, val: float):
+        self._x_min = float(val)
+
+    @property
+    def x_max(self) -> float:
+        return self._x_max if self._x_max is not None else (self.x + self.size * 0.5)
+
+    @x_max.setter
+    def x_max(self, val: float):
+        self._x_max = float(val)
+
+    @property
+    def y_min(self) -> float:
+        return self._y_min if self._y_min is not None else (self.y - self.size * 0.5)
+
+    @y_min.setter
+    def y_min(self, val: float):
+        self._y_min = float(val)
+
+    @property
+    def y_max(self) -> float:
+        return self._y_max if self._y_max is not None else (self.y + self.size * 0.5)
+
+    @y_max.setter
+    def y_max(self, val: float):
+        self._y_max = float(val)
 
     @property
     def z_mean(self) -> float:
@@ -166,59 +204,64 @@ class AdaptiveQuadtree:
         self.tau_z = tau_z
         self.min_pts = min_pts_per_cell
 
-        self.num_coarse_x = int(np.ceil((self.bounds.X_MAX - self.bounds.X_MIN) / coarse_res))
-        self.num_coarse_y = int(np.ceil((self.bounds.Y_MAX - self.bounds.Y_MIN) / coarse_res))
+        # Section 4.4 Dynamic Coarse Node Capacity calculation
+        extent_x = abs(self.bounds.X_MAX - self.bounds.X_MIN)
+        extent_y = abs(self.bounds.Y_MAX - self.bounds.Y_MIN)
+        self.num_coarse_x = int(np.ceil(extent_x / coarse_res))
+        self.num_coarse_y = int(np.ceil(extent_y / coarse_res))
         self.total_coarse = self.num_coarse_x * self.num_coarse_y
+        self.max_coarse_nodes = self.total_coarse + 5000
         self.leaves: List[QuadtreeNode] = []
 
-        # Pre-allocate reusable coarse node pool to eliminate frame-to-frame GC pauses
+        # Lazy/bounded coarse node pool allocation to prevent GC spikes and memory bloat
         self._coarse_pool: List[QuadtreeNode] = []
-        for iy in range(self.num_coarse_y):
+        initial_pool = min(self.total_coarse, 8000)
+        for i in range(initial_pool):
+            iy = i // self.num_coarse_x if self.num_coarse_x > 0 else 0
+            ix = i % self.num_coarse_x if self.num_coarse_x > 0 else 0
+            cx = self.bounds.X_MIN + (ix + 0.5) * coarse_res
             cy = self.bounds.Y_MIN + (iy + 0.5) * coarse_res
-            for ix in range(self.num_coarse_x):
-                cx = self.bounds.X_MIN + (ix + 0.5) * coarse_res
-                node = QuadtreeNode(
-                    x=cx,
-                    y=cy,
-                    size=coarse_res,
-                    depth=0,
-                    stats=CellStats(0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0),
-                    is_leaf=True,
-                )
-                self._coarse_pool.append(node)
+            node = QuadtreeNode(
+                x=cx,
+                y=cy,
+                size=coarse_res,
+                depth=0,
+                stats=CellStats(0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0),
+                is_leaf=True,
+            )
+            self._coarse_pool.append(node)
 
-    def _get_or_create_coarse_node(self, key: int, cx: float, cy: float) -> QuadtreeNode:
+        # Foveated grid index instance
+        from backend.mapping.foveated_grid import FoveatedGrid
+        self.foveated_grid = FoveatedGrid(bounds=self.bounds)
+
+    def _get_or_create_coarse_node(self, pool_idx: int, cx: float, cy: float) -> QuadtreeNode:
         """
         Safely retrieves pre-allocated coarse node or dynamically expands pool to prevent IndexError.
         Guarantees zero-crash operation when spatial boundaries expand or shift dynamically.
+        Uses a dense pool to prevent memory bloat.
         """
-        # Impose a hard limit on the pool expansion to prevent unbounded memory allocation leaks (e.g. 500,000 max nodes)
         MAX_POOL_LIMIT = 500000
-        if key >= MAX_POOL_LIMIT:
+        if pool_idx >= MAX_POOL_LIMIT:
             return None
 
-        if key < len(self._coarse_pool):
-            node = self._coarse_pool[key]
+        if pool_idx < len(self._coarse_pool):
+            node = self._coarse_pool[pool_idx]
             node.x = cx
             node.y = cy
             return node
 
-        needed = (key + 1) - len(self._coarse_pool)
+        needed = (pool_idx + 1) - len(self._coarse_pool)
         for _ in range(needed):
-            curr_idx = len(self._coarse_pool)
-            iy = curr_idx // self.num_coarse_x if self.num_coarse_x > 0 else 0
-            ix = curr_idx % self.num_coarse_x if self.num_coarse_x > 0 else 0
-            node_x = self.bounds.X_MIN + (ix + 0.5) * self.coarse_res
-            node_y = self.bounds.Y_MIN + (iy + 0.5) * self.coarse_res
             self._coarse_pool.append(QuadtreeNode(
-                x=node_x,
-                y=node_y,
+                x=0.0,
+                y=0.0,
                 size=self.coarse_res,
                 depth=0,
                 stats=CellStats(0.0, 0.0, 0.0, 0.0, 0.0, 0, 0.0),
                 is_leaf=True,
             ))
-        node = self._coarse_pool[key]
+        node = self._coarse_pool[pool_idx]
         node.x = cx
         node.y = cy
         return node
@@ -311,6 +354,16 @@ class AdaptiveQuadtree:
         Guarantees local elevation grid is reset per frame without inter-frame accumulation.
         """
         self.leaves.clear()
+        if hasattr(self, "foveated_grid") and self.foveated_grid is not None:
+            self.foveated_grid.clear()
+
+    def build_foveated(self, points: np.ndarray, point_costs: Optional[np.ndarray] = None) -> List[QuadtreeNode]:
+        """
+        PS 26053 Hybrid Hierarchical Foveated Spatial Index build.
+        Exact zone resolutions: 5cm (0-10m), 10cm (10-25m), 25cm (25-50m), 50cm (50-100m).
+        """
+        self.leaves = self.foveated_grid.build_foveated(points, point_costs=point_costs)
+        return self.leaves
 
     def build(self, points: np.ndarray, point_costs: Optional[np.ndarray] = None) -> List[QuadtreeNode]:
         """
@@ -377,8 +430,9 @@ class AdaptiveQuadtree:
         # Noise-gated subdivision: gate beam noise on flat ground (sigma^2 > 0.04)
         # Subdivide when step height exceeds obstacle threshold, elevated object in air, or lethal hazard detected
         # Flat asphalt ground: Z between -2.0m and -1.35m with delta_z <= 0.15m ALWAYS evaluates strictly to Cost = 0
+        # Flat asphalt ground: relax delta_z to 0.20m to reduce unnecessary subdivision of bumpy ground
         mean_z_arr = np.where(counts > 0, z_sum / np.maximum(counts, 1), -99.0)
-        is_flat_ground = (mean_z_arr >= -2.15) & (mean_z_arr <= -1.35) & (delta_z <= 0.15)
+        is_flat_ground = (mean_z_arr >= -2.15) & (mean_z_arr <= -1.35) & (delta_z <= 0.20)
 
         is_obstacle_step = (delta_z > self.tau_z)
         is_elevated_obj = (z_max > -1.2)
@@ -386,11 +440,9 @@ class AdaptiveQuadtree:
         needs_subdivision = active & (~is_flat_ground) & (is_obstacle_step | is_elevated_obj | is_lethal_hazard)
 
         # Obstacle Coarse-Leaf Collapse (Coarse Tile Aggregation for Obstacle Clusters):
-        # Any coarse cell containing confirmed non-ground obstacle returns (obs_counts >= 3 or lethal point costs)
-        # collapses into a unified coarse leaf (Cost = 255, size = 0.50m) instead of fragmenting into 64 tiny micro-cubes.
-        # Single stray dust/noise returns (obs_counts < 3) do NOT trigger coarse obstacle collapse.
+        # Collapse cells containing confirmed non-ground obstacle returns (obs_counts >= 2)
         is_solid_obstacle = active & (~is_flat_ground) & (
-            (obs_counts >= 3) |
+            (obs_counts >= 2) |
             (c_costs >= 181 if c_costs is not None else False)
         )
 
@@ -408,13 +460,15 @@ class AdaptiveQuadtree:
         c_z_sum = z_sum[coarse_keys]
         c_slopes = np.where(c_dz_arr > 0.01, np.degrees(np.arctan2(c_dz_arr, self.coarse_res)), 0.0)
 
+        _coarse_pool_idx = 0
         for i in range(len(coarse_keys)):
             key = coarse_keys[i]
             ix = key % self.num_coarse_x
             iy = key // self.num_coarse_x
             cx = self.bounds.X_MIN + (ix + 0.5) * self.coarse_res
             cy = self.bounds.Y_MIN + (iy + 0.5) * self.coarse_res
-            node = self._get_or_create_coarse_node(key, cx, cy)
+            node = self._get_or_create_coarse_node(_coarse_pool_idx, cx, cy)
+            _coarse_pool_idx += 1
             if node is None:
                 continue
             
