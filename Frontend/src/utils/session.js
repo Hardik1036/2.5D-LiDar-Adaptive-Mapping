@@ -19,9 +19,9 @@ export function summarizeFrame(f) {
   let accuracy = null;
   if (rawAcc !== undefined && rawAcc !== null && !isNaN(rawAcc)) {
     accuracy = Math.min(100, Math.max(0, Number(rawAcc)));
-  } else if (cells && cells.length > 0) {
-    // Graceful fallback based on cell traversability ratio if backend key omitted
-    accuracy = +((safeCount / len) * 100).toFixed(1);
+  } else {
+    // Zero fabrication: report null when ground truth is absent
+    accuracy = null;
   }
   const stats = f?.system_stats
     ? {

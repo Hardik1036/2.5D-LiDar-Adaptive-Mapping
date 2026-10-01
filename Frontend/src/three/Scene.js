@@ -117,6 +117,7 @@ export class LidarScene {
     this.vehicleMesh = null;
     this.vehicleGroup = null;
     this.egoGroup = null;
+    this.labels = new Map();
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color("#050811");
     this.camera = new THREE.PerspectiveCamera(48, 1, 0.1, 500);
@@ -168,6 +169,7 @@ export class LidarScene {
     this.axes = new THREE.AxesHelper(5);
     this.axes.visible = false;
     this.scene.add(this.axes);
+    this.createBoundaryRings();
     this.tileGeometry = this.track(new THREE.BoxGeometry(1, 1, 1));
     this.tileMaterial = this.track(
       new THREE.MeshBasicMaterial({
@@ -345,19 +347,20 @@ export class LidarScene {
     }
 
     // Align vehicle model front bumper to positive X axis (+X forward)
-    const finalRotY = targetYaw + Math.PI / 2;
+    const vehicleYaw = targetYaw;
+    const finalRotY = vehicleYaw + Math.PI;
 
     if (this.vehicleMesh) {
       this.vehicleMesh.position.set(x, z, -y);
-      this.vehicleMesh.rotation.y = finalRotY;
+      this.vehicleMesh.rotation.y = vehicleYaw + Math.PI;
     }
     if (this.vehicleGroup && this.vehicleGroup !== this.vehicleMesh) {
       this.vehicleGroup.position.set(x, z, -y);
-      this.vehicleGroup.rotation.y = finalRotY;
+      this.vehicleGroup.rotation.y = vehicleYaw + Math.PI;
     }
     if (this.egoGroup && this.egoGroup !== this.vehicleMesh) {
       this.egoGroup.position.set(x, z, -y);
-      this.egoGroup.rotation.y = finalRotY;
+      this.egoGroup.rotation.y = vehicleYaw + Math.PI;
     }
     if (this.sector) {
       this.sector.position.set(x, 0.02, -y);
@@ -865,7 +868,7 @@ export class LidarScene {
       this.updatePose(egoPose);
     } else if (this.vehicleMesh) {
       const heading = Number(frame.ego_yaw ?? frame.telemetry?.ego_yaw ?? 0);
-      this.vehicleMesh.rotation.y = heading + (Math.PI / 2);
+      this.vehicleMesh.rotation.y = heading + Math.PI;
       if (this.sector) {
         this.sector.rotation.z = 0;
       }
@@ -1058,7 +1061,7 @@ export class LidarScene {
     this.vehicleGroup = ego;
     this.vehicleMesh = ego;
     const egoYaw = 0;
-    this.vehicleMesh.rotation.y = egoYaw + Math.PI / 2;
+    this.vehicleMesh.rotation.y = egoYaw + Math.PI;
   }
   label(text, color) {
     let sprite = this.labels.get(text);
@@ -1088,6 +1091,74 @@ export class LidarScene {
     sprite.scale.set(6, 1.5, 1);
     this.labels.set(text, sprite);
     return sprite;
+  }
+  createBoundaryRings() {
+    const group = new THREE.Group();
+    group.name = "boundaryRings";
+    const xMin = -20.0;
+    const xMax = 100.0;
+    const yMin = -50.0;
+    const yMax = 50.0;
+
+    const ringDefs = [
+      { r: 10, label: "10 m → 5 cm", color: "#38bdf8" },
+      { r: 25, label: "25 m → 10 cm", color: "#38bdf8" },
+      { r: 50, label: "50 m → 25 cm", color: "#38bdf8" },
+      { r: 100, label: "100 m → 50 cm", color: "#38bdf8" },
+    ];
+
+    const numSegments = 360;
+    const dTheta = (2 * Math.PI) / numSegments;
+
+    for (const def of ringDefs) {
+      const positions = [];
+      for (let i = 0; i < numSegments; i++) {
+        const theta1 = i * dTheta;
+        const theta2 = (i + 1) * dTheta;
+
+        const x1 = def.r * Math.cos(theta1);
+        const y1 = def.r * Math.sin(theta1);
+        const x2 = def.r * Math.cos(theta2);
+        const y2 = def.r * Math.sin(theta2);
+
+        // Geometrically clip to operational envelope [-20, 100] x [-50, 50]
+        const inside1 = x1 >= xMin && x1 <= xMax && y1 >= yMin && y1 <= yMax;
+        const inside2 = x2 >= xMin && x2 <= xMax && y2 >= yMin && y2 <= yMax;
+
+        if (inside1 && inside2) {
+          // Three.js coords: (x, z_up, -y)
+          positions.push(x1, -2.06, -y1);
+          positions.push(x2, -2.06, -y2);
+        }
+      }
+
+      if (positions.length > 0) {
+        const geom = this.track(new THREE.BufferGeometry());
+        geom.setAttribute(
+          "position",
+          new THREE.Float32BufferAttribute(positions, 3),
+        );
+        const mat = this.track(
+          new THREE.LineBasicMaterial({
+            color: def.color,
+            transparent: true,
+            opacity: 0.55,
+          }),
+        );
+        const lines = new THREE.LineSegments(geom, mat);
+        group.add(lines);
+      }
+
+      // Add label sprite along forward corridor (+X axis in backend)
+      const labelX = Math.min(def.r, xMax - 1.0);
+      const sprite = this.label(def.label, def.color);
+      sprite.position.set(labelX, -1.8, 0);
+      sprite.scale.set(7, 1.75, 1);
+      group.add(sprite);
+    }
+
+    this.scene.add(group);
+    this.boundaryRingsGroup = group;
   }
   detectionFor(object) {
     let d = this.detections.get(object.id);
