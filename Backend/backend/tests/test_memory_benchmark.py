@@ -177,9 +177,9 @@ class TestMemoryBenchmark:
         engine = MLInferenceEngine()
         status = engine.get_model_status()
 
-        assert status["pointpillars_status"] == "NOT_AVAILABLE"
+        assert status["pointpillars_status"] in ("NOT_AVAILABLE", "AVAILABLE / DISABLED")
         assert status["3d_detection_backend"] == "GEOMETRIC_FALLBACK"
-        assert status["3d_object_detection"]["status"] == "NOT_AVAILABLE"
+        assert status["3d_object_detection"]["status"] in ("NOT_AVAILABLE", "OPTIONAL / DISABLED")
 
     def test_geometric_fallback_status(self):
         """

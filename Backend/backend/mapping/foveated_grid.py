@@ -140,6 +140,7 @@ class FoveatedCell:
     """
     Represents an axis-aligned rectangular leaf in the Foveated Spatial Index.
     Zero raw point arrays are stored permanently.
+    Separates spatial coverage / cell existence from LiDAR observation / statistics.
     """
     x: float
     y: float
@@ -153,6 +154,8 @@ class FoveatedCell:
     semantic_cost: int = 0
     is_obstacle: bool = False
     is_hazard: bool = False
+    observed: bool = True
+    valid: bool = True
 
     @property
     def min_x(self) -> float:
@@ -198,23 +201,70 @@ class FoveatedCell:
 
     @property
     def z_mean(self) -> float:
-        return float(self.stats.mean_z) if self.stats is not None else -1.68
+        if not self.observed or not self.valid or self.stats is None:
+            return float("nan")
+        return float(self.stats.mean_z)
 
     @property
     def z_min(self) -> float:
-        return float(self.stats.z_min) if self.stats is not None else -1.68
+        if not self.observed or not self.valid or self.stats is None:
+            return float("nan")
+        return float(self.stats.z_min)
 
     @property
     def z_max(self) -> float:
-        return float(self.stats.z_max) if self.stats is not None else -1.68
+        if not self.observed or not self.valid or self.stats is None:
+            return float("nan")
+        return float(self.stats.z_max)
 
     @property
     def delta_z(self) -> float:
-        return float(self.stats.delta_z) if self.stats is not None else 0.0
+        if not self.observed or not self.valid or self.stats is None:
+            return float("nan")
+        return float(self.stats.delta_z)
+
+    @property
+    def variance(self) -> float:
+        if not self.observed or not self.valid or self.stats is None:
+            return float("nan")
+        return float(self.stats.variance)
+
+    @property
+    def slope(self) -> float:
+        if not self.observed or not self.valid or self.stats is None:
+            return float("nan")
+        return float(self.stats.slope)
+
+    @property
+    def mean_z(self) -> float:
+        return self.z_mean
 
     @property
     def point_count(self) -> int:
-        return int(self.stats.point_count) if self.stats is not None else 0
+        if not self.observed or not self.valid or self.stats is None:
+            return 0
+        return int(self.stats.point_count)
+
+    @classmethod
+    def create_unobserved_cell(cls, x: float, y: float, size: float, zone: int) -> "FoveatedCell":
+        """Factory for an unobserved cell with valid=False, cost=-1, and NaN statistics."""
+        cell_id = make_deterministic_cell_id(x, y, zone, size)
+        return cls(
+            x=x,
+            y=y,
+            size=size,
+            zone=zone,
+            cell_id=cell_id,
+            depth=0,
+            stats=None,
+            cost=-1,
+            semantic_cost=-1,
+            is_leaf=True,
+            is_obstacle=False,
+            is_hazard=False,
+            observed=False,
+            valid=False,
+        )
 
     def to_quadtree_node(self) -> QuadtreeNode:
         """Converts to a QuadtreeNode for seamless downstream compatibility."""
@@ -229,6 +279,8 @@ class FoveatedCell:
             semantic_cost=self.semantic_cost,
             is_obstacle=self.is_obstacle,
             is_hazard=self.is_hazard,
+            observed=self.observed,
+            valid=self.valid,
         )
         node.cell_id = self.cell_id
         node.x_min = self.x_min
@@ -246,8 +298,10 @@ class FoveatedCell:
             "cost": int(self.cost),
             "zone": int(self.zone),
             "cell_id": self.cell_id,
+            "observed": bool(self.observed),
+            "valid": bool(self.valid),
         }
-        if self.stats is not None:
+        if self.observed and self.valid and self.stats is not None:
             d["z_min"] = float(round(self.stats.z_min, 2))
             d["z_max"] = float(round(self.stats.z_max, 2))
             d["z_mean"] = float(round(self.stats.mean_z, 2))
@@ -256,12 +310,13 @@ class FoveatedCell:
             d["slope"] = float(round(self.stats.slope, 1))
             d["pts"] = int(self.stats.point_count)
         else:
-            d["z_min"] = -1.6
-            d["z_max"] = -1.6
-            d["z_mean"] = -1.6
-            d["delta_z"] = 0.0
-            d["variance"] = 0.0
-            d["slope"] = 0.0
+            d["cost"] = -1
+            d["z_min"] = float("nan")
+            d["z_max"] = float("nan")
+            d["z_mean"] = float("nan")
+            d["delta_z"] = float("nan")
+            d["variance"] = float("nan")
+            d["slope"] = float("nan")
             d["pts"] = 0
         return d
 
@@ -567,9 +622,73 @@ class FoveatedGrid:
 
                 self.cells[cell_id] = cell
                 self.leaves.append(cell)
-                quadtree_leaves.append(cell.to_quadtree_node())
 
-        return quadtree_leaves
+        # Resolve any multi-resolution or boundary cell overlaps: finer zones take strict spatial precedence
+        sorted_leaves = sorted(self.leaves, key=lambda c: (c.zone, c.size))
+        occupied_bins = set()
+        resolved_cells: Dict[str, FoveatedCell] = {}
+        resolved_leaves: List[FoveatedCell] = []
+        resolved_quadtree: List[QuadtreeNode] = []
+
+        for cell in sorted_leaves:
+            # Check 5cm grid footprint
+            bx_min = int(np.floor((cell.min_x + 1e-5) / 0.05))
+            bx_max = int(np.ceil((cell.max_x - 1e-5) / 0.05))
+            by_min = int(np.floor((cell.min_y + 1e-5) / 0.05))
+            by_max = int(np.ceil((cell.max_y - 1e-5) / 0.05))
+
+            cell_bins = []
+            conflict = False
+            for bx in range(bx_min, bx_max):
+                for by in range(by_min, by_max):
+                    bkey = (bx, by)
+                    if bkey in occupied_bins:
+                        conflict = True
+                        break
+                    cell_bins.append(bkey)
+                if conflict:
+                    break
+
+            if not conflict:
+                occupied_bins.update(cell_bins)
+                resolved_cells[cell.cell_id] = cell
+                resolved_leaves.append(cell)
+                resolved_quadtree.append(cell.to_quadtree_node())
+
+        self.cells = resolved_cells
+        self.leaves = resolved_leaves
+        return resolved_quadtree
+
+    @classmethod
+    def create_unobserved_cell(
+        cls, x: float, y: float, zone: Optional[int] = None, res: Optional[float] = None
+    ) -> FoveatedCell:
+        """
+        Creates an unobserved spatial cell for areas within perception coverage
+        with no valid LiDAR returns. Never fabricates elevation (Z values are NaN).
+        """
+        r = float(np.sqrt(x * x + y * y))
+        if zone is None:
+            zone = get_zone_for_distance(r)
+        if res is None:
+            res = get_mandated_resolution(zone)
+        ix = int(np.floor(x / res))
+        iy = int(np.floor(y / res))
+        cx = (ix + 0.5) * res
+        cy = (iy + 0.5) * res
+        cell_id = make_deterministic_cell_id(cx, cy, zone, res)
+        return FoveatedCell(
+            x=cx,
+            y=cy,
+            size=res,
+            zone=zone,
+            cell_id=cell_id,
+            stats=None,
+            cost=-1,
+            is_leaf=True,
+            observed=False,
+            valid=False,
+        )
 
     def get_leaves(self) -> List[FoveatedCell]:
         return self.leaves
