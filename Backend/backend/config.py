@@ -273,6 +273,9 @@ class PointPillarsConfig:
     PointPillars (Model 2) 3D Object Detection configuration.
     Extracted from backend/models/configs/cbgs_pp_multihead.yaml.
     """
+    ENABLED: bool = field(
+        default_factory=lambda: os.environ.get("POINTPILLARS_ENABLED", "0").lower() in ("1", "true", "yes")
+    )
     POINT_CLOUD_RANGE: Tuple[float, float, float, float, float, float] = (
         -51.2, -51.2, -5.0, 51.2, 51.2, 3.0
     )
@@ -383,6 +386,7 @@ SERVER = CONFIG
 NAV2 = Nav2Config()
 DATABASE = DatabaseConfig()
 POINT_PILLARS = PointPillarsConfig.from_yaml()
+POINTPILLARS_ENABLED = POINT_PILLARS.ENABLED
 
 # Core algorithmic and spatial configuration aliases
 MAP_BOUNDS = BOUNDS

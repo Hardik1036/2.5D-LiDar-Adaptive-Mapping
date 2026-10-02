@@ -13,6 +13,10 @@ Backend/data/*
 *.pkl
 *.npy
 *.npz
+!Backend/backend/models/*.npz
+
+# Isolated PointPillars training assets and export venv
+PointPillars_Assets/
 
 # Whitelist bundled 50 static and 70 dynamic sweeps
 !Backend/data/static_corridor/velodyne/*.bin

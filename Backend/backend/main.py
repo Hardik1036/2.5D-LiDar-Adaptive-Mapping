@@ -173,6 +173,7 @@ class PerceptionPipeline:
         kaggle: bool = False,
         kaggle_dataset: Optional[str] = None,
         kaggle_streamer: Optional[Any] = None,
+        enable_pointpillars: Optional[bool] = None,
         **kwargs,
     ):
         self.config = CONFIG
@@ -202,7 +203,7 @@ class PerceptionPipeline:
         self.thin_hazard_detector = ThinHazardDetector()
 
         # ML Integration & Database Adapters
-        self.ml_adapter = MLPerceptionAdapter()
+        self.ml_adapter = MLPerceptionAdapter(enable_pointpillars=enable_pointpillars)
         self.db_adapter = DatabaseAdapter(enabled=use_redis)
 
         # 2.5D Adaptive Quadtree Mapping, Terrain Memory, & Tactical Evaluators
@@ -506,9 +507,44 @@ class PerceptionPipeline:
         if semantic_labels is None:
             semantic_labels = self.ml_adapter.segment_point_cloud(clean_points)
         ml_subsets = self.ml_adapter.process_semantic_labels(clean_points, semantic_labels)
-        pillar_dets = self.ml_adapter.process_pillar_detections(
-            meta.get("dynamic_detections") if isinstance(meta, dict) else None
-        )
+
+        # 3D Object Detection: Live PointPillars neural detector or offline test fixture
+        t_pp_start = time.perf_counter()
+        pp_stats: Dict[str, Any] = {}
+        if meta and "dynamic_detections" in meta:
+            pillar_dets = self.ml_adapter.process_pillar_detections(meta.get("dynamic_detections"))
+            t_pp = (time.perf_counter() - t_pp_start) * 1000.0
+            pp_stats = {
+                "input_points": len(clean_points),
+                "pointpillars_valid_points": len(clean_points),
+                "pointpillars_discarded_points": 0,
+                "active_pillars": 0,
+                "raw_candidates": len(pillar_dets),
+                "final_detections": len(pillar_dets),
+                "latency_ms": round(t_pp, 2),
+                "status": "OFFLINE_FIXTURE",
+            }
+        elif getattr(self.ml_adapter, "pointpillars_enabled", False):
+            # Feed raw LiDAR points with intensity to PointPillars (learned range [-51.2, 51.2])
+            pp_res = self.ml_adapter.detect_pointpillars(raw_points)
+            pillar_dets = [d.to_detected_cluster() for d in pp_res.detections]
+            t_pp = (time.perf_counter() - t_pp_start) * 1000.0
+            pp_stats = dict(pp_res.stats)
+            pp_stats["latency_ms"] = round(t_pp, 2)
+            pp_stats["status"] = pp_res.status
+        else:
+            pillar_dets = []
+            t_pp = 0.0
+            pp_stats = {
+                "input_points": len(clean_points),
+                "pointpillars_valid_points": 0,
+                "pointpillars_discarded_points": len(clean_points),
+                "active_pillars": 0,
+                "raw_candidates": 0,
+                "final_detections": 0,
+                "latency_ms": 0.0,
+                "status": "DISABLED",
+            }
 
         # Low-profile threat detection via Model 2 (ThreatNet1D) on isolated semantic ground
         ground_points = clean_points[semantic_labels == 0]
@@ -553,6 +589,13 @@ class PerceptionPipeline:
 
         # Filter out soft porous vegetation clusters from rigid dynamic tracker
         rigid_candidates = [c for (c, is_porous, _) in classified_clusters if not is_porous]
+
+        # Tag detector provenance explicitly: "geometric" vs "pointpillars"
+        for c in rigid_candidates:
+            c.source = "geometric"
+        for c in pillar_dets:
+            c.source = "pointpillars"
+
         all_candidates = rigid_candidates + pillar_dets
         active_tracks = self.tracker.update(all_candidates, dt=self.dt)
         dynamic_tracks = self.tracker.get_dynamic_tracks()
@@ -655,11 +698,12 @@ class PerceptionPipeline:
         preprocessing_ms = round(t_dust + t_seg, 2)
         semantic_segmentation_inference_ms = round(t_ml, 2) if self.ml_adapter.salsa_session is not None else 0.0
         mapping_ms = round(t_quad + t_trench + t_blend + t_cost, 2)
-        three_d_detection_ms = round(t_thin, 2) # Including ThinHazard as 3D detection for now, + pointpillars later
+        pointpillars_latency_ms = round(t_pp, 2)
+        three_d_detection_ms = round(t_thin + t_pp, 2)
         tracking_ms = round(t_track + t_roll, 2)
         output_construction_ms = round(t_ros + t_db, 2)
         
-        sum_measured = t_ingest + t_dust + t_seg + t_ml + t_quad + t_trench + t_blend + t_cost + t_track + t_roll + t_ros + t_db + t_thin
+        sum_measured = t_ingest + t_dust + t_seg + t_ml + t_quad + t_trench + t_blend + t_cost + t_track + t_roll + t_ros + t_db + t_thin + t_pp
         other_pipeline_overhead_ms = max(0.0, round(total_latency_ms - sum_measured, 2))
 
         # Memory accounting separation (Section 8.3 - 8.6)
@@ -704,9 +748,12 @@ class PerceptionPipeline:
             "inference_ms": semantic_segmentation_inference_ms,  # alias for backwards compatibility
             "mapping_ms": mapping_ms,
             "3d_detection_ms": three_d_detection_ms,
+            "pointpillars_latency_ms": pointpillars_latency_ms,
             "tracking_ms": tracking_ms,
             "output_construction_ms": output_construction_ms,
             "other_pipeline_overhead_ms": other_pipeline_overhead_ms,
+            "pointpillars_stats": pp_stats,
+            "pointpillars_detections_count": len(pillar_dets),
             
             "profiling_breakdown": {
                 "input_ingestion_ms": input_ingestion_ms,
