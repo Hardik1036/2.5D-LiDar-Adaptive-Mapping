@@ -32,7 +32,10 @@ export const DEFAULT_OPTIONS = {
  * 2. Fallback Path: Absolute Height relative to ground plane
  * Prohibit elevated voxels/cells (Z > -1.2 m) from rendering in green (0x238636).
  */
-export function getCostColor(cost, z) {
+export function getCostColor(cost, z, observed) {
+  if (cost === -1 || observed === false) {
+    return 0x30363D; // Muted Dark Charcoal Slate: UNKNOWN / NO LIDAR RETURN
+  }
   const zNum = (z !== undefined && z !== null) ? Number(z) : -999.0;
   const c = Number(cost ?? 0);
 
@@ -415,6 +418,9 @@ export class LidarScene {
     this.maxTerrainCells = this.capacity;
   }
   getColor(cell, zOverride) {
+    if (cell.observed === false || cell.valid === false || cell.cost === -1) {
+      return this.color.setHex(0x30363D);
+    }
     const zMean = Number(cell.z ?? cell.z_mean ?? ((Number(cell.z_min ?? -1.68) + Number(cell.z_max ?? -1.68)) * 0.5));
     const zMin = Number(cell.z_min ?? zMean);
     const zMax = Number(cell.z_max ?? zMean);
@@ -425,10 +431,10 @@ export class LidarScene {
     const z = zOverride !== undefined ? zOverride : zMean;
 
     if (this.options.mode === MODE_ADAPTIVE || this.options.mode === MODE_SEMANTIC || this.options.colorBy === "cost") {
-      return this.color.setHex(getCostColor(effectiveCost, z));
+      return this.color.setHex(getCostColor(effectiveCost, z, cell.observed));
     }
     // Height coloring fallback: adhere to DRDO standards (prohibiting green in air)
-    return this.color.setHex(getCostColor(undefined, z));
+    return this.color.setHex(getCostColor(undefined, z, cell.observed));
   }
   mesh(geometry, material, scale, position) {
     const m = new THREE.Mesh(geometry, material);
@@ -676,59 +682,69 @@ export class LidarScene {
       for (let i = 0; i < cells.length && count < this.maxTerrainCells; i++) {
         const cell = cells[i];
 
-        const zMean = Number(cell.z ?? cell.z_mean ?? -1.68);
-        const zMin = Number(cell.z_min ?? zMean);
-        const zMax = Number(cell.z_max ?? zMean);
-        const deltaZ = Number(cell.delta_z ?? (zMax - zMin) ?? 0.0);
-
-        const isVisible = zMin >= minHeight && zMin <= maxHeight;
-        if (!isVisible) continue;
-
-        // Ground plane asphalt filter: flat pavement within drivable elevation limits
-        const isGroundBand = (
-          zMean >= -2.20 &&
-          zMean <= -1.25 &&
-          deltaZ <= 0.18 &&
-          zMax <= -1.15
-        );
+        const isUnobserved = (cell.observed === false || cell.valid === false || cell.cost === -1 || cell.z === null);
+        const baseSize = Number(cell.size || 0.50);
 
         let effectiveCost;
-        if (isGroundBand) {
-          effectiveCost = 0; // Emerald Green: Safe Traversable Corridor
-        } else {
-          // Obstacle: prioritize semantic cost or raw cost
-          effectiveCost = isSemanticMode
-            ? Number(cell.semantic_cost ?? cell.cost ?? 0)
-            : Number(cell.cost ?? cell.semantic_cost ?? 0);
-        }
-
-        // Assign color using defense colormap
-        const colorHex = getCostColor(effectiveCost, zMean);
-        this.instancedTerrainMesh.setColorAt(count, new THREE.Color(colorHex));
-
-        // Determine low-relief step height and layout
-        const isHazard = (effectiveCost >= 181);
-        const isCaution = (effectiveCost > 50 && effectiveCost <= 180);
-
-        const baseSize = Number(
-          cell.size || (effectiveCost <= 50 ? 1.0 : (effectiveCost <= 180 ? 0.75 : 0.50))
-        );
-
+        let colorHex;
         let tileHeight;
         let xyScale;
+        let baseFloor;
 
-        if (isHazard) {
-          tileHeight = 0.20;           // 20 cm obstacle step
-          xyScale = baseSize * 0.98;
-        } else if (isCaution) {
-          tileHeight = 0.10;           // 10 cm caution step
-          xyScale = baseSize * 0.98;
+        if (isUnobserved) {
+          effectiveCost = -1;
+          colorHex = 0x30363D; // Dark Slate: UNKNOWN / NO LIDAR RETURN
+          tileHeight = 0.01;   // Flat wafer to distinguish from valid terrain steps
+          xyScale = baseSize * 0.96;
+          baseFloor = -1.68;
         } else {
-          tileHeight = 0.04;           // 4 cm flat pavement tile
-          xyScale = baseSize * 1.02;   // Overlap micro-seams into unbroken road
+          const zMean = Number(cell.z ?? cell.z_mean ?? -1.68);
+          const zMin = Number(cell.z_min ?? zMean);
+          const zMax = Number(cell.z_max ?? zMean);
+          const deltaZ = Number(cell.delta_z ?? (zMax - zMin) ?? 0.0);
+
+          const isVisible = zMin >= minHeight && zMin <= maxHeight;
+          if (!isVisible) continue;
+
+          // Ground plane asphalt filter: flat pavement within drivable elevation limits
+          const isGroundBand = (
+            zMean >= -2.20 &&
+            zMean <= -1.25 &&
+            deltaZ <= 0.18 &&
+            zMax <= -1.15
+          );
+
+          if (isGroundBand) {
+            effectiveCost = 0; // Emerald Green: Safe Traversable Corridor
+          } else {
+            // Obstacle: prioritize semantic cost or raw cost
+            effectiveCost = isSemanticMode
+              ? Number(cell.semantic_cost ?? cell.cost ?? 0)
+              : Number(cell.cost ?? cell.semantic_cost ?? 0);
+          }
+
+          // Assign color using defense colormap
+          colorHex = getCostColor(effectiveCost, zMean, true);
+
+          // Determine low-relief step height and layout
+          const isHazard = (effectiveCost >= 181);
+          const isCaution = (effectiveCost > 50 && effectiveCost <= 180);
+
+          if (isHazard) {
+            tileHeight = 0.20;           // 20 cm obstacle step
+            xyScale = baseSize * 0.98;
+          } else if (isCaution) {
+            tileHeight = 0.10;           // 10 cm caution step
+            xyScale = baseSize * 0.98;
+          } else {
+            tileHeight = 0.04;           // 4 cm flat pavement tile
+            xyScale = baseSize * 1.02;   // Overlap micro-seams into unbroken road
+          }
+
+          baseFloor = (zMin < -1.0) ? zMin : -1.68;
         }
 
-        const baseFloor = (zMin < -1.0) ? zMin : -1.68;
+        this.instancedTerrainMesh.setColorAt(count, new THREE.Color(colorHex));
         const centerY = baseFloor + (tileHeight * 0.5);
 
         this.matrix.makeScale(xyScale, tileHeight, xyScale);

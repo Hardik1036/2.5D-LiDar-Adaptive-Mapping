@@ -714,10 +714,12 @@ class PerceptionPipeline:
         # Runtime mode determination (Section 1.3)
         if getattr(self, "_is_simulation", False) or (meta and meta.get("is_simulation", False)):
             runtime_mode = "SIMULATION"
+        elif self.ml_adapter.pointpillars_enabled and self.ml_adapter.pointpillars_adapter and self.ml_adapter.pointpillars_adapter.is_available:
+            runtime_mode = "LIVE POINTPILLARS"
         elif self.ml_adapter.salsa_session is not None:
             runtime_mode = "LIVE_DL"
         else:
-            runtime_mode = "LIVE_GEOMETRIC_FALLBACK"
+            runtime_mode = "2.5D ADAPTIVE"
 
         # Empirical Uniform-vs-Adaptive benchmark on identical sweep (PS 26053 Item 2)
         if len(clean_points) > 0:
@@ -809,7 +811,9 @@ class PerceptionPipeline:
 
             # Ground truth integrity (Section 1.2 & 13)
             "tracking_accuracy": None,
-            "ground_truth_status": "GROUND TRUTH NOT AVAILABLE",
+            "ground_truth_status": "NOT AVAILABLE",
+            "ground_truth": "NOT AVAILABLE",
+            "model_validation": model_status_dict.get("model_validation"),
 
             # Legacy compatibility fields
             "system_status": health_info["system_status"],

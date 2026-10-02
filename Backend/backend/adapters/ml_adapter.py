@@ -11,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
-from scipy.special import expit
+from scipy.special import expit  # type: ignore[import-untyped]
 
 from backend.adapters.pointpillars_runtime import (
     PointPillarsRuntimeAdapter,
@@ -27,10 +27,10 @@ logger = logging.getLogger("MLPerceptionAdapter")
 
 # Optional PyTorch import
 try:
-    import torch
+    import torch  # type: ignore[import-not-found]
     HAS_TORCH = True
 except ImportError:
-    torch = None
+    torch = None  # type: ignore[assignment]
     HAS_TORCH = False
 
 # Optional ONNX Runtime import
@@ -40,6 +40,13 @@ try:
 except ImportError:
     ort = None
     HAS_ORT = False
+
+class ModelStatus:
+    NOT_LOADED = "MODEL NOT LOADED"
+    AVAILABLE_DISABLED = "AVAILABLE / DISABLED"
+    ACTIVE = "ACTIVE"
+    FAILED = "FAILED"
+
 
 # Global cache for ThreatNet1D ONNX session and calibration threshold
 _CACHED_ONNX_SESSION: Optional[Any] = None
@@ -400,6 +407,8 @@ class MLPerceptionAdapter:
         self.threat_session = None
         self.pointpillars_session = None
         self.pointpillars_adapter: Optional[PointPillarsRuntimeAdapter] = None
+        self._pp_status: Optional[str] = None
+        self._pp_init_error: Optional[str] = None
         self.threat_threshold = 0.75
         self.execution_provider = "CPUExecutionProvider"
 
@@ -420,8 +429,9 @@ class MLPerceptionAdapter:
         return default
 
     def _init_sessions(self) -> None:
-        opts = ort.SessionOptions() if HAS_ORT and ort is not None else None
-        if opts is not None:
+        if HAS_ORT and ort is not None:
+            assert ort is not None
+            opts = ort.SessionOptions()
             opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
             opts.intra_op_num_threads = min(8, max(1, (os.cpu_count() or 4) - 1))
             available = ort.get_available_providers()
@@ -462,9 +472,11 @@ class MLPerceptionAdapter:
                         logger.info(f"[ML Adapter] Loaded PointPillars runtime adapter from {self.pointpillars_adapter.model_path}")
                     else:
                         self.pointpillars_session = None
+                        self._pp_init_error = self.pointpillars_adapter.initialization_error
                         logger.warning(f"[ML Adapter] PointPillars unavailable: {self.pointpillars_adapter.initialization_error}")
                 except Exception as e:
                     logger.warning(f"[ML Adapter] Failed to initialize PointPillars runtime adapter: {e}")
+                    self._pp_init_error = str(e)
                     self.pointpillars_adapter = None
                     self.pointpillars_session = None
             else:
@@ -498,15 +510,18 @@ class MLPerceptionAdapter:
                         model = SalsaNextArchitecture(in_channels=5, num_classes=4)
                         if hasattr(model, "load_state_dict"):
                             model.load_state_dict(state_dict, strict=False)
-                            model.to(self.device)
-                            model.eval()
+                            if hasattr(model, "to"):
+                                model.to(self.device)  # type: ignore[attr-defined]
+                            if hasattr(model, "eval"):
+                                model.eval()  # type: ignore[attr-defined]
                             self.segmentation_model = model
                             print(f"[ML Adapter] SalsaNext model loaded from {target_path} on {self.device}")
                         else:
                             self.segmentation_model = None
-                    elif isinstance(checkpoint, torch.nn.Module):
-                        self.segmentation_model = checkpoint.to(self.device)
-                        self.segmentation_model.eval()
+                    elif hasattr(checkpoint, "to") and hasattr(checkpoint, "eval"):
+                        checkpoint.to(self.device)  # type: ignore[attr-defined]
+                        checkpoint.eval()  # type: ignore[attr-defined]
+                        self.segmentation_model = checkpoint
                         print(f"[ML Adapter] SalsaNext model loaded from {target_path} on {self.device}")
                     else:
                         self.segmentation_model = None
@@ -639,7 +654,7 @@ class MLPerceptionAdapter:
                 if not np.all(valid_pts):
                     invalid_pts = ~valid_pts
                     z_inv = pts[invalid_pts, 2]
-                    inv_labels = np.zeros(np.sum(invalid_pts), dtype=np.int32)
+                    inv_labels = np.zeros(np.count_nonzero(invalid_pts), dtype=np.int32)
                     inv_labels[z_inv > 0.15] = self.LABEL_RIGID
                     inv_labels[(z_inv > 0.15) & (z_inv < 1.0)] = self.LABEL_VEGETATION
                     labels[invalid_pts] = inv_labels
@@ -658,7 +673,7 @@ class MLPerceptionAdapter:
         labels[(z > 0.15) & (z < 1.0)] = self.LABEL_VEGETATION  # Passable vegetation
         return labels
 
-    def get_model_status(self) -> dict:
+    def get_model_status(self, pointpillars_enabled: Optional[bool] = None) -> dict:
         """
         Reports actual discovered models, providers, and pipeline mode (PS 26053 Items 4, 5, 6, 10, 12).
         Zero fabrication:
@@ -667,6 +682,8 @@ class MLPerceptionAdapter:
         - Detection is accurately reported based on whether PointPillars runtime adapter is loaded.
         - Tracking is 2D Kalman Filter with Hungarian matching.
         """
+        pp_enabled = bool(pointpillars_enabled) if pointpillars_enabled is not None else getattr(self, "pointpillars_enabled", False)
+
         seg_loaded = (self.salsa_session is not None) or (self.segmentation_model is not None)
         pp_avail = (self.pointpillars_adapter is not None and self.pointpillars_adapter.is_available)
         det_loaded = (self.pointpillars_session is not None) or pp_avail
@@ -690,18 +707,41 @@ class MLPerceptionAdapter:
             "runtime_memory_mib": "NOT_ISOLATED" if seg_loaded else None,
         }
 
-        if det_loaded:
-            pp_status = "AVAILABLE"
-            pp_block_status = "LOADED"
-        elif not getattr(self, "pointpillars_enabled", False):
-            pp_status = "NOT_AVAILABLE"
-            pp_block_status = "NOT_AVAILABLE"
-        elif self.pointpillars_adapter is not None and self.pointpillars_adapter.initialization_error:
-            pp_status = "DETECTOR_UNAVAILABLE"
-            pp_block_status = "NOT_AVAILABLE"
+        # Check PointPillars model asset presence on disk
+        pp_model_file_exists = False
+        if self.pointpillars_adapter is not None and self.pointpillars_adapter.model_path is not None:
+            pp_model_file_exists = Path(self.pointpillars_adapter.model_path).exists()
         else:
-            pp_status = "NOT_AVAILABLE"
-            pp_block_status = "NOT_AVAILABLE"
+            default_onnx = Path(__file__).resolve().parent.parent / "models" / "cbgs_pp_backbone_head.onnx"
+            pp_model_file_exists = default_onnx.exists()
+
+        if getattr(self, "_pp_status", None) is not None:
+            pp_status = self._pp_status
+            if pp_status == "FAILED":
+                pp_block_status = "INITIALISATION FAILED"
+            elif pp_status == "ACTIVE":
+                pp_block_status = "POINTPILLARS ACTIVE"
+            elif pp_status == "AVAILABLE / DISABLED":
+                pp_block_status = "OPTIONAL / DISABLED"
+            else:
+                pp_status = "MODEL NOT LOADED"
+                pp_block_status = "MODEL NOT LOADED"
+        elif (self.pointpillars_adapter is not None and self.pointpillars_adapter.initialization_error) or getattr(self, "_pp_init_error", None) is not None:
+            pp_status = "FAILED"
+            pp_block_status = "INITIALISATION FAILED"
+        elif not pp_enabled:
+            if pp_model_file_exists:
+                pp_status = "AVAILABLE / DISABLED"
+                pp_block_status = "OPTIONAL / DISABLED"
+            else:
+                pp_status = "MODEL NOT LOADED"
+                pp_block_status = "MODEL NOT LOADED"
+        elif det_loaded:
+            pp_status = "ACTIVE"
+            pp_block_status = "POINTPILLARS ACTIVE"
+        else:
+            pp_status = "MODEL NOT LOADED"
+            pp_block_status = "MODEL NOT LOADED"
 
         detection_block = {
             "status": pp_block_status,
@@ -721,19 +761,64 @@ class MLPerceptionAdapter:
             "tracking_on_geometric_detections": True,
         }
 
-        pipeline_mode = "LIVE_DL" if seg_loaded else "LIVE_GEOMETRIC_FALLBACK"
-        pipeline_mode_detailed = "LIVE_DL_WITH_POINTPILLARS_DETECTION" if (seg_loaded and det_loaded) else (
-            "LIVE_DL_WITH_GEOMETRIC_DETECTION_FALLBACK" if seg_loaded else "LIVE_GEOMETRIC_FALLBACK"
-        )
+        if (pp_status == "ACTIVE" or (det_loaded and pp_enabled)):
+            pipeline_mode = "LIVE POINTPILLARS"
+            pipeline_mode_detailed = "LIVE_DL_WITH_POINTPILLARS_DETECTION"
+        else:
+            pipeline_mode = "2.5D ADAPTIVE"
+            pipeline_mode_detailed = "2.5D_ADAPTIVE_GEOMETRIC_MAPPING"
+
+        model_validation_block = {
+            "model_name": "PointPillars",
+            "dataset": "NuScenes validation",
+            "samples": 81,
+            "mAP": 9.73,
+            "NDS": 14.90,
+            "map": 0.0973,
+            "nds": 0.1490,
+            "map_pct": "9.73%",
+            "nds_pct": "14.90%",
+            "class_ap": {
+                "Car": 41.9,
+                "Pedestrian": 40.3,
+                "Truck": 7.0,
+                "Bus": 8.1,
+            },
+            "per_class_ap": {
+                "car": "41.9%",
+                "pedestrian": "40.3%",
+                "truck": "7.0%",
+                "bus": "8.1%",
+            },
+            "live_ground_truth": "NOT AVAILABLE",
+        }
+
+        perception_engine_panel = {
+            "mode": pipeline_mode,
+            "segmentation": "GEOMETRIC",
+            "detection_3d": pp_block_status,
+            "ground_truth": "NOT AVAILABLE",
+        }
+
+        models_panel = {
+            "pointpillars": pp_status,
+            "segmentation": "LOADED" if seg_loaded else "MODEL NOT LOADED",
+        }
 
         return {
+            # Structured UI panel blocks (Issue 2 & Issue 3)
+            "perception_engine": perception_engine_panel,
+            "models": models_panel,
+
             # Legacy compatible keys (preserves existing consumers)
-            "segmentation": semantic_segmentation_block["status"],
-            "detection": detection_block["status"],
+            "segmentation": "GEOMETRIC" if not seg_loaded else semantic_segmentation_block["status"],
+            "detection": pp_block_status,
+            "pointpillars": pp_status,
             "device": str(self.device),
             "execution_provider": self.execution_provider if seg_loaded else None,
             "segmentation_model": seg_name,
             "detection_model": det_name,
+            "ground_truth": "NOT AVAILABLE",
 
             # Machine-readable explicit audit keys (PS 26053 Items 4, 5, 6, 7, 8, 9, 10, 12)
             "pipeline_mode": pipeline_mode,
@@ -752,6 +837,7 @@ class MLPerceptionAdapter:
             "available_onnxruntime_providers": avail_providers,
             "cuda_available": cuda_is_avail,
             "cuda_execution_provider": "AVAILABLE" if cuda_is_avail else "NOT_AVAILABLE",
+            "model_validation": model_validation_block,
         }
 
     def detect_low_profile_threats(
@@ -1129,4 +1215,5 @@ def non_max_suppression_2d(
 
 
 MLInferenceEngine = MLPerceptionAdapter
+MLAdapter = MLPerceptionAdapter
 

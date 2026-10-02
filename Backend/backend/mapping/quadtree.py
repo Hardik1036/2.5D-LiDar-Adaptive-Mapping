@@ -32,6 +32,8 @@ class QuadtreeNode:
     is_hazard: bool = False
     cell_id: Optional[str] = None
     zone: int = 1
+    observed: bool = True
+    valid: bool = True
     _x_min: Optional[float] = None
     _x_max: Optional[float] = None
     _y_min: Optional[float] = None
@@ -71,6 +73,8 @@ class QuadtreeNode:
 
     @property
     def z_mean(self) -> float:
+        if not self.observed or not self.valid:
+            return float("nan")
         return float(self.stats.mean_z) if self.stats is not None else -1.68
 
     @z_mean.setter
@@ -83,7 +87,13 @@ class QuadtreeNode:
         return self.z_mean
 
     @property
+    def mean_z(self) -> float:
+        return self.z_mean
+
+    @property
     def delta_z(self) -> float:
+        if not self.observed or not self.valid:
+            return float("nan")
         return float(self.stats.delta_z) if self.stats is not None else 0.0
 
     @delta_z.setter
@@ -92,7 +102,21 @@ class QuadtreeNode:
             self.stats.delta_z = float(val)
 
     @property
+    def variance(self) -> float:
+        if not self.observed or not self.valid:
+            return float("nan")
+        return float(self.stats.variance) if self.stats is not None else float("nan")
+
+    @property
+    def slope(self) -> float:
+        if not self.observed or not self.valid:
+            return float("nan")
+        return float(self.stats.slope) if self.stats is not None else float("nan")
+
+    @property
     def z_max(self) -> float:
+        if not self.observed or not self.valid:
+            return float("nan")
         return float(self.stats.z_max) if self.stats is not None else -1.68
 
     @z_max.setter
@@ -102,6 +126,8 @@ class QuadtreeNode:
 
     @property
     def z_min(self) -> float:
+        if not self.observed or not self.valid:
+            return float("nan")
         return float(self.stats.z_min) if self.stats is not None else -1.68
 
     @z_min.setter
@@ -111,6 +137,8 @@ class QuadtreeNode:
 
     @property
     def point_count(self) -> int:
+        if not self.observed or not self.valid:
+            return 0
         return int(self.stats.point_count) if self.stats is not None else 0
 
     @point_count.setter
@@ -134,7 +162,6 @@ class QuadtreeNode:
     def max_y(self) -> float:
         return self.y + self.size / 2.0
 
-
     def to_dict(self):
         """Serialize leaf for network broadcasting with zero-overhead native python types."""
         d = {
@@ -142,8 +169,10 @@ class QuadtreeNode:
             "y": float(round(self.y, 2)),
             "size": float(round(self.size, 3)),
             "cost": self.cost,
+            "observed": bool(self.observed),
+            "valid": bool(self.valid),
         }
-        if self.stats is not None:
+        if self.observed and self.valid and self.stats is not None:
             d["z_min"] = float(round(self.stats.z_min, 2))
             d["z_max"] = float(round(self.stats.z_max, 2))
             d["z_mean"] = float(round(self.stats.mean_z, 2))
@@ -152,12 +181,13 @@ class QuadtreeNode:
             d["slope"] = float(round(self.stats.slope, 1))
             d["pts"] = int(self.stats.point_count)
         else:
-            d["z_min"] = -1.6
-            d["z_max"] = -1.6
-            d["z_mean"] = -1.6
-            d["delta_z"] = 0.0
-            d["variance"] = 0.0
-            d["slope"] = 0.0
+            d["cost"] = -1
+            d["z_min"] = float("nan")
+            d["z_max"] = float("nan")
+            d["z_mean"] = float("nan")
+            d["delta_z"] = float("nan")
+            d["variance"] = float("nan")
+            d["slope"] = float("nan")
             d["pts"] = 0
         return d
 

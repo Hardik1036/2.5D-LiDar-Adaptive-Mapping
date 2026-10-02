@@ -182,6 +182,34 @@ class PayloadBuilder:
 
     @staticmethod
     def _serialize_leaf(leaf: QuadtreeNode) -> dict:
+
+        is_observed = (
+            getattr(leaf, "observed", True)
+            and getattr(leaf, "valid", True)
+            and getattr(leaf, "cost", 0) != -1
+            and leaf.stats is not None
+            and getattr(leaf.stats, "point_count", 0) > 0
+        )
+
+        if not is_observed:
+            return {
+                "x": round(float(leaf.x), 2),
+                "y": round(float(leaf.y), 2),
+                "z": None,
+                "mean_z": None,
+                "z_min": None,
+                "z_max": None,
+                "size": round(float(leaf.size), 2),
+                "cost": -1,
+                "semantic_cost": -1,
+                "observed": False,
+                "valid": False,
+                "delta_z": None,
+                "variance": None,
+                "slope": None,
+                "pts": 0,
+            }
+
         z_mean = float(getattr(leaf, 'z_mean', getattr(leaf, 'z', -1.68)))
         delta_z = float(getattr(leaf, 'delta_z', 0.0))
         z_max = float(getattr(leaf, 'z_max', z_mean))
@@ -223,6 +251,8 @@ class PayloadBuilder:
             "size": round(float(leaf.size), 2),
             "cost": final_cost,
             "semantic_cost": final_semantic_cost,
+            "observed": True,
+            "valid": True,
         }
         if leaf.stats is not None:
             cell_dict["delta_z"] = round(float(leaf.stats.delta_z), 2)
@@ -366,19 +396,45 @@ class PayloadBuilder:
             runtime_mode = stats["mode"]
         elif stats.get("is_simulation", False):
             runtime_mode = "SIMULATION"
-        elif model_status and model_status.get("segmentation") == "LOADED":
-            runtime_mode = "LIVE_DL"
+        elif model_status and (
+            model_status.get("pointpillars_status") == "ACTIVE"
+            or model_status.get("detection") == "POINTPILLARS ACTIVE"
+            or (isinstance(model_status.get("models"), dict) and model_status["models"].get("pointpillars") == "ACTIVE")
+            or (isinstance(model_status.get("perception_engine"), dict) and model_status["perception_engine"].get("mode") == "LIVE POINTPILLARS")
+        ):
+            runtime_mode = "LIVE POINTPILLARS"
+        elif model_status and isinstance(model_status.get("perception_engine"), dict) and model_status["perception_engine"].get("mode") is not None:
+            runtime_mode = model_status["perception_engine"]["mode"]
         else:
-            runtime_mode = "LIVE_GEOMETRIC_FALLBACK"
+            runtime_mode = "2.5D ADAPTIVE"
+
+        # Model validation metadata (PointPillars NuScenes validation result)
+        model_validation_info = {
+            "model_name": "PointPillars",
+            "dataset": "NuScenes validation",
+            "samples": 81,
+            "mAP": 9.73,
+            "NDS": 14.90,
+            "class_ap": {
+                "Car": 41.9,
+                "Pedestrian": 40.3,
+                "Truck": 7.0,
+                "Bus": 8.1,
+            },
+            "live_ground_truth": "NOT AVAILABLE",
+        }
 
         # Model status block (Section 9.1)
         resolved_model_status = model_status or stats.get("model_status") or {
             "segmentation": "MODEL NOT LOADED",
-            "detection": "MODEL NOT LOADED",
+            "detection": "OPTIONAL / DISABLED",
             "device": None,
             "segmentation_model": None,
             "detection_model": None,
+            "model_validation": model_validation_info,
         }
+        if "model_validation" not in resolved_model_status:
+            resolved_model_status["model_validation"] = model_validation_info
 
         # Build schema compliant system_stats
         mapping_mem = stats.get("mapping_memory_mib", stats.get("ram_mb"))
@@ -408,7 +464,8 @@ class PayloadBuilder:
             "adaptive_measured_mapping_memory_mib": stats.get("adaptive_measured_mapping_memory_mib"),
             "measured_reduction_percent": stats.get("measured_reduction_percent"),
             "tracking_accuracy": stats.get("tracking_accuracy"),
-            "ground_truth_status": gt_status,
+            "ground_truth_status": "NOT AVAILABLE" if gt_status in ("NOT AVAILABLE", "GROUND TRUTH NOT AVAILABLE") else gt_status,
+            "model_validation": model_validation_info,
         }
         # Merge existing stats keys for backward compatibility
         for k, v in stats.items():
@@ -420,6 +477,7 @@ class PayloadBuilder:
             "frame_id": frame_id,
             "mode": runtime_mode,
             "model_status": resolved_model_status,
+            "model_validation": model_validation_info,
             "system_status": stats.get("system_status", "ALL_SYSTEMS_NOMINAL"),
             "system_stats": ps26053_stats,
             "cells": serialized_cells,
@@ -482,5 +540,8 @@ def build_telemetry_payload(*args, **kwargs) -> TelemetryPayload:
     """Module-level wrapper for telemetry payload construction."""
     builder = PayloadBuilder()
     return builder.build_telemetry_payload(*args, **kwargs)
+
+
+_serialize_leaf = PayloadBuilder._serialize_leaf
 
 

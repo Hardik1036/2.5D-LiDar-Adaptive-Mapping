@@ -94,7 +94,7 @@ class PointPillarsDetection:
             "velocity_y": round(float(self.velocity_y), 4),
             "velocity": (round(float(self.velocity_x), 4), round(float(self.velocity_y), 4)),
             "class_name": self.class_name,
-            "class_id": int(self.class_id),
+            "class_id": self.class_id,
             "score": round(float(self.score), 4),
         }
 
@@ -189,8 +189,8 @@ class PointPillarsRuntimeAdapter:
     ):
         self.score_thresh = float(score_thresh)
         self.nms_thresh = float(nms_thresh)
-        self.nms_pre_maxsize = int(nms_pre_maxsize)
-        self.nms_post_maxsize = int(nms_post_maxsize)
+        self.nms_pre_maxsize = nms_pre_maxsize
+        self.nms_post_maxsize = nms_post_maxsize
 
         self.is_available = False
         self.initialization_error: Optional[str] = None
@@ -385,7 +385,7 @@ class PointPillarsRuntimeAdapter:
         num_discarded = total_input_points - num_valid
         t_prep_ms = (time.perf_counter() - t0) * 1000.0
 
-        stats = {
+        stats: Dict[str, Any] = {
             "input_points": total_input_points,
             "pointpillars_valid_points": num_valid,
             "pointpillars_discarded_points": num_discarded,
@@ -591,7 +591,7 @@ class PointPillarsRuntimeAdapter:
                     valid = ious <= self.nms_thresh
                     order = order[1:][valid]
 
-                global_class_id = int(global_label_map[k])
+                global_class_id = global_label_map[k]
                 class_name = POINTPILLARS_CLASS_NAMES[global_class_id - 1]
 
                 for sel_idx in keep:
