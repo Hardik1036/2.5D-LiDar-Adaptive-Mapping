@@ -28,6 +28,7 @@ class DetectedCluster:
     yaw: float = 0.0
     velocity: Optional[Tuple[float, float]] = None
     label: str = "obstacle"
+    source: str = "geometric"
 
     def to_dict(self):
         return {
@@ -36,6 +37,7 @@ class DetectedCluster:
             "bbox": [round(b, 2) for b in self.bbox],
             "points": self.point_count,
             "label": self.label,
+            "source": self.source,
         }
 
 

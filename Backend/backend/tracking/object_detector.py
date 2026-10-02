@@ -56,6 +56,7 @@ class BoundingBox3D:
             yaw=self.yaw,
             velocity=self.velocity,
             label=self.class_name,
+            source="pointpillars" if hasattr(self, "source") and getattr(self, "source") == "pointpillars" else "geometric",
         )
 
 
@@ -118,6 +119,7 @@ class ObjectDetector3D:
                     points=np.empty((0, 3), dtype=np.float32),
                     yaw=yaw,
                     label=label,
+                    source="pointpillars",
                 )
             )
 
@@ -180,6 +182,7 @@ class ObjectDetector3D:
                     points=c_pts,
                     yaw=0.0,
                     label="obstacle",
+                    source="geometric",
                 )
             )
 

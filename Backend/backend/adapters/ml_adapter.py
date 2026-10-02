@@ -13,6 +13,11 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 from scipy.special import expit
 
+from backend.adapters.pointpillars_runtime import (
+    PointPillarsRuntimeAdapter,
+    PointPillarsResult,
+    PointPillarsDetection,
+)
 from backend.adapters.salsanext import LightweightSalsaNext, SalsaNextArchitecture
 from backend.config import POINT_PILLARS, PointPillarsConfig
 from backend.models.threat_features import compute_ground_residual, make_threat_windows
@@ -350,6 +355,7 @@ class MLPerceptionAdapter:
         pointpillars_config: Optional[PointPillarsConfig] = None,
         model_path: Optional[str] = None,
         detection_model_path: Optional[str] = None,
+        enable_pointpillars: Optional[bool] = None,
     ):
         if model_path is not None and not os.path.exists(model_path):
             model_dir = "nonexistent_dir"
@@ -361,6 +367,7 @@ class MLPerceptionAdapter:
         else:
             self.model_dir = model_dir
 
+        self.detection_model_path = detection_model_path
         self.accuracy: Optional[float] = None
         self.ground_truth_status: str = "GROUND TRUTH NOT AVAILABLE"
 
@@ -382,12 +389,17 @@ class MLPerceptionAdapter:
         self.voxel_size: Tuple[float, ...] = self.pointpillars_config.VOXEL_SIZE
         self.pointpillars_classes: List[str] = list(self.pointpillars_config.CLASS_NAMES)
         self.box_code_size: int = self.pointpillars_config.CODE_SIZE
+        if enable_pointpillars is not None:
+            self.pointpillars_enabled = bool(enable_pointpillars)
+        else:
+            self.pointpillars_enabled = getattr(self.pointpillars_config, "ENABLED", False)
 
         self.salsa_session = None
         self.segmentation_session = None
         self.segmentation_model = None
         self.threat_session = None
         self.pointpillars_session = None
+        self.pointpillars_adapter: Optional[PointPillarsRuntimeAdapter] = None
         self.threat_threshold = 0.75
         self.execution_provider = "CPUExecutionProvider"
 
@@ -439,16 +451,25 @@ class MLPerceptionAdapter:
                 except Exception as e:
                     print(f"[ML Adapter] Failed to load ThreatNet1D: {e}")
 
-            # 3. Load PointPillars ONNX (Model 2 3D Bounding Box Detector if available)
-            for pp_name in ["pointpillars.onnx", "PointPillar.onnx", "cbgs_pp_multihead.onnx"]:
-                pp_path = os.path.join(self.model_dir, pp_name)
-                if os.path.exists(pp_path):
-                    try:
-                        self.pointpillars_session = ort.InferenceSession(pp_path, opts, providers=providers)
-                        print(f"[ML Adapter] Loaded PointPillars model from {pp_path}")
-                        break
-                    except Exception as e:
-                        print(f"[ML Adapter] Failed to load PointPillars model {pp_path}: {e}")
+            # 3. Load PointPillars Runtime Adapter if enabled
+            if self.pointpillars_enabled:
+                try:
+                    self.pointpillars_adapter = PointPillarsRuntimeAdapter(
+                        model_path=self.detection_model_path,
+                    )
+                    if self.pointpillars_adapter.is_available:
+                        self.pointpillars_session = self.pointpillars_adapter._session
+                        logger.info(f"[ML Adapter] Loaded PointPillars runtime adapter from {self.pointpillars_adapter.model_path}")
+                    else:
+                        self.pointpillars_session = None
+                        logger.warning(f"[ML Adapter] PointPillars unavailable: {self.pointpillars_adapter.initialization_error}")
+                except Exception as e:
+                    logger.warning(f"[ML Adapter] Failed to initialize PointPillars runtime adapter: {e}")
+                    self.pointpillars_adapter = None
+                    self.pointpillars_session = None
+            else:
+                self.pointpillars_adapter = None
+                self.pointpillars_session = None
 
         # Load threshold calibration
         calib_path = os.path.join(self.model_dir, "threshold_calibration.json")
@@ -643,11 +664,12 @@ class MLPerceptionAdapter:
         Zero fabrication:
         - Model file size (7.36 MiB) is reported separately from runtime model memory (NOT_ISOLATED).
         - Model identity verified from model_config.json / ONNX graph.
-        - Detection is accurately reported as GEOMETRIC_FALLBACK (DBSCAN), not PointPillars.
-        - Tracking is 2D Kalman Filter with Hungarian matching on geometric detections.
+        - Detection is accurately reported based on whether PointPillars runtime adapter is loaded.
+        - Tracking is 2D Kalman Filter with Hungarian matching.
         """
         seg_loaded = (self.salsa_session is not None) or (self.segmentation_model is not None)
-        det_loaded = self.pointpillars_session is not None
+        pp_avail = (self.pointpillars_adapter is not None and self.pointpillars_adapter.is_available)
+        det_loaded = (self.pointpillars_session is not None) or pp_avail
         seg_name = "Lightweight semantic segmentation ONNX model (LightweightSalsaNext)" if seg_loaded else None
         det_name = "PointPillars" if det_loaded else None
 
@@ -668,11 +690,28 @@ class MLPerceptionAdapter:
             "runtime_memory_mib": "NOT_ISOLATED" if seg_loaded else None,
         }
 
+        if det_loaded:
+            pp_status = "AVAILABLE"
+            pp_block_status = "LOADED"
+        elif not getattr(self, "pointpillars_enabled", False):
+            pp_status = "NOT_AVAILABLE"
+            pp_block_status = "NOT_AVAILABLE"
+        elif self.pointpillars_adapter is not None and self.pointpillars_adapter.initialization_error:
+            pp_status = "DETECTOR_UNAVAILABLE"
+            pp_block_status = "NOT_AVAILABLE"
+        else:
+            pp_status = "NOT_AVAILABLE"
+            pp_block_status = "NOT_AVAILABLE"
+
         detection_block = {
-            "status": "LOADED" if det_loaded else "NOT_AVAILABLE",
+            "status": pp_block_status,
             "model_name": det_name,
             "format": "ONNX" if det_loaded else None,
-            "pointpillars_status": "LOADED" if det_loaded else "NOT_AVAILABLE",
+            "pointpillars_status": pp_status,
+            "model_path": str(self.pointpillars_adapter.model_path) if (self.pointpillars_adapter and self.pointpillars_adapter.model_path) else None,
+            "execution_provider": (self.pointpillars_adapter._session.get_providers()[0] if (self.pointpillars_adapter and self.pointpillars_adapter._session) else None),
+            "input_shape": [1, 64, 512, 512] if det_loaded else None,
+            "point_cloud_range": list(self.pointpillars_adapter.POINT_CLOUD_RANGE) if self.pointpillars_adapter else list(self.point_cloud_range),
         }
 
         geometric_fallback_block = {
@@ -683,7 +722,9 @@ class MLPerceptionAdapter:
         }
 
         pipeline_mode = "LIVE_DL" if seg_loaded else "LIVE_GEOMETRIC_FALLBACK"
-        pipeline_mode_detailed = "LIVE_DL_WITH_GEOMETRIC_DETECTION_FALLBACK" if seg_loaded else "LIVE_GEOMETRIC_FALLBACK"
+        pipeline_mode_detailed = "LIVE_DL_WITH_POINTPILLARS_DETECTION" if (seg_loaded and det_loaded) else (
+            "LIVE_DL_WITH_GEOMETRIC_DETECTION_FALLBACK" if seg_loaded else "LIVE_GEOMETRIC_FALLBACK"
+        )
 
         return {
             # Legacy compatible keys (preserves existing consumers)
@@ -699,10 +740,10 @@ class MLPerceptionAdapter:
             "pipeline_mode_detailed": pipeline_mode_detailed,
             "semantic_segmentation": semantic_segmentation_block,
             "3d_object_detection": detection_block,
-            "pointpillars_status": detection_block["pointpillars_status"],
+            "pointpillars_status": pp_status,
             "geometric_fallback_status": geometric_fallback_block["status"],
             "geometric_detection_fallback": geometric_fallback_block,
-            "3d_detection_backend": "GEOMETRIC_FALLBACK",
+            "3d_detection_backend": "POINTPILLARS_WITH_GEOMETRIC_FALLBACK" if det_loaded else "GEOMETRIC_FALLBACK",
             "tracking_backend": "Linear constant-velocity Kalman tracking with Hungarian data association on geometric fallback detections",
             "tracking_on_geometric_detections": True,
             "model_architecture_source": arch_source,
@@ -927,11 +968,55 @@ class MLPerceptionAdapter:
                 points=self._empty_pts,
                 yaw=cluster_yaw,
                 velocity=velocity,
+                source="pointpillars",
             )
 
             clusters.append(cluster)
 
         return clusters
+
+    def detect_pointpillars(self, points: np.ndarray) -> PointPillarsResult:
+        """
+        Executes PointPillars 3D object detection on raw LiDAR points.
+        Points must be in sensor coordinates [x, y, z, intensity].
+        Points outside the learned range [-51.2, 51.2] are strictly filtered without modification.
+        """
+        if not self.pointpillars_enabled:
+            return PointPillarsResult(
+                detections=[],
+                stats={
+                    "input_points": len(points) if isinstance(points, np.ndarray) else 0,
+                    "pointpillars_valid_points": 0,
+                    "pointpillars_discarded_points": len(points) if isinstance(points, np.ndarray) else 0,
+                    "active_pillars": 0,
+                    "raw_candidates": 0,
+                    "final_detections": 0,
+                },
+                status="DISABLED",
+                error_message="PointPillars is disabled via configuration",
+            )
+
+        if self.pointpillars_adapter is None or not self.pointpillars_adapter.is_available:
+            err = (
+                self.pointpillars_adapter.initialization_error
+                if self.pointpillars_adapter is not None
+                else "PointPillars adapter not initialized"
+            )
+            return PointPillarsResult(
+                detections=[],
+                stats={
+                    "input_points": len(points) if isinstance(points, np.ndarray) else 0,
+                    "pointpillars_valid_points": 0,
+                    "pointpillars_discarded_points": len(points) if isinstance(points, np.ndarray) else 0,
+                    "active_pillars": 0,
+                    "raw_candidates": 0,
+                    "final_detections": 0,
+                },
+                status="DETECTOR_UNAVAILABLE",
+                error_message=err,
+            )
+
+        return self.pointpillars_adapter.predict(points)
 
     def filter_dynamic_tracks(self, tracks: List[Any], min_speed: float = 0.15) -> List[Any]:
         """
