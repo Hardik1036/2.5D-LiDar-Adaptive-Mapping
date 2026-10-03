@@ -444,9 +444,12 @@ class FoveatedGrid:
         z = pts[:, 2]
         r = np.sqrt(x * x + y * y)
 
+        fwd_max = max(float(getattr(self.bounds, "X_MAX", 60.0)), self.max_radial_range)
+        lat_bound = max(abs(float(getattr(self.bounds, "Y_MAX", 35.0))), abs(float(getattr(self.bounds, "Y_MIN", -35.0))), 50.0)
+
         valid_mask = (
-            (x >= self.bounds.X_MIN) & (x <= self.bounds.X_MAX) &
-            (y >= self.bounds.Y_MIN) & (y <= self.bounds.Y_MAX) &
+            (x >= self.bounds.X_MIN) & (x <= fwd_max) &
+            (y >= -lat_bound) & (y <= lat_bound) &
             (z >= self.bounds.Z_MIN) & (z <= self.bounds.Z_MAX) &
             (r <= self.max_radial_range) &
             np.isfinite(x) & np.isfinite(y) & np.isfinite(z)

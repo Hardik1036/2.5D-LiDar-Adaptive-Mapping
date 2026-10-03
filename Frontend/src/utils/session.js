@@ -23,13 +23,29 @@ export function summarizeFrame(f) {
     // Zero fabrication: report null when ground truth is absent
     accuracy = null;
   }
+  const rawMappingAcc =
+    f?.system_stats?.mapping_accuracy ??
+    f?.system_stats?.surface_precision ??
+    null;
+  const mappingAccuracy =
+    rawMappingAcc !== null && rawMappingAcc !== undefined && !isNaN(Number(rawMappingAcc))
+      ? Math.min(100, Math.max(0, Number(rawMappingAcc)))
+      : null;
+
   const stats = f?.system_stats
     ? {
         ...f.system_stats,
         accuracy,
         tracking_accuracy: accuracy,
+        mapping_accuracy: mappingAccuracy,
+        surface_precision: mappingAccuracy,
       }
-    : { accuracy, tracking_accuracy: accuracy };
+    : {
+        accuracy,
+        tracking_accuracy: accuracy,
+        mapping_accuracy: mappingAccuracy,
+        surface_precision: mappingAccuracy,
+      };
 
   return {
     frame: f,

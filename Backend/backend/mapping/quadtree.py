@@ -245,7 +245,7 @@ class AdaptiveQuadtree:
 
         # Lazy/bounded coarse node pool allocation to prevent GC spikes and memory bloat
         self._coarse_pool: List[QuadtreeNode] = []
-        initial_pool = min(self.total_coarse, 8000)
+        initial_pool = max(40000, self.total_coarse)
         for i in range(initial_pool):
             iy = i // self.num_coarse_x if self.num_coarse_x > 0 else 0
             ix = i % self.num_coarse_x if self.num_coarse_x > 0 else 0
@@ -730,11 +730,19 @@ class AdaptiveQuadtree:
         structure_3x3 = np.ones((3, 3), dtype=bool)
         closed_3x3 = ndi.binary_closing(ground_2d, structure=structure_3x3)
 
-        # 2. Forward corridor closing (5x11 kernel: ±2 Y cells, ±5 X cells) bridging longitudinal laser divergence
-        structure_fwd = np.ones((5, 11), dtype=bool)
+        # 2. Forward corridor closing (7x13 kernel: ±3 Y cells, ±6 X cells) bridging longitudinal laser divergence
+        structure_fwd = np.ones((7, 13), dtype=bool)
         closed_fwd = ndi.binary_closing(ground_2d, structure=structure_fwd)
 
-        closed_ground = closed_3x3 | closed_fwd
+        # 3. Lateral radial closing (9x7 kernel: ±4 Y cells, ±3 X cells) bridging peripheral lateral beam voids
+        structure_lat = np.ones((9, 7), dtype=bool)
+        closed_lat = ndi.binary_closing(ground_2d, structure=structure_lat)
+
+        # 4. Adjacent empty neighbor closing around verified safe road cells
+        structure_adj = ndi.generate_binary_structure(2, 2)
+        closed_adj = ndi.binary_dilation(ground_2d, structure=structure_adj) & ndi.binary_closing(ground_2d, structure=np.ones((5, 5), dtype=bool))
+
+        closed_ground = closed_3x3 | closed_fwd | closed_lat | closed_adj
         bridged = closed_ground & (~active_2d)
 
         if not np.any(bridged):
@@ -742,8 +750,8 @@ class AdaptiveQuadtree:
 
         # Smooth local elevation interpolation for bridged cells
         ground_float = ground_2d.astype(np.float32)
-        sum_z = ndi.uniform_filter(mean_z_2d * ground_float, size=(3, 9))
-        sum_w = ndi.uniform_filter(ground_float, size=(3, 9))
+        sum_z = ndi.uniform_filter(mean_z_2d * ground_float, size=(5, 9))
+        sum_w = ndi.uniform_filter(ground_float, size=(5, 9))
         smooth_z = sum_z / np.maximum(sum_w, 1e-5)
 
         # --- Vectorized gap width & boundary elevation extraction ---

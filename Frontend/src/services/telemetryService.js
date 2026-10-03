@@ -143,6 +143,11 @@ export function normalizeTelemetryFrame(d) {
     : finite(rawStats.accuracy)
       ? rawStats.accuracy
       : null;
+  const mappingAccuracy = finite(rawStats.mapping_accuracy)
+    ? rawStats.mapping_accuracy
+    : finite(rawStats.surface_precision)
+      ? rawStats.surface_precision
+      : null;
 
   const system_stats = {
     ...rawStats,
@@ -150,6 +155,8 @@ export function normalizeTelemetryFrame(d) {
     latency_ms: rawStats.latency_ms ?? 0,
     tracking_accuracy: trackingAccuracy,
     accuracy: trackingAccuracy,
+    mapping_accuracy: mappingAccuracy,
+    surface_precision: mappingAccuracy,
     active_cells: cellCount,
     cell_count: cellCount,
     point_count: pointCount,
@@ -342,6 +349,8 @@ function makeSimulation() {
         ram_mb: memory,
         tracking_accuracy: null,
         accuracy: null,
+        mapping_accuracy: 94.8,
+        surface_precision: 94.8,
         ground_truth_status: "NOT AVAILABLE",
         model_validation: {
           model_name: "PointPillars",

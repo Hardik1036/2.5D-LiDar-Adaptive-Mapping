@@ -50,6 +50,23 @@ export default function MetricsPanel({ summary, status, options }) {
     validationMap = summary.frame.system_stats.model_validation.mAP;
   }
 
+  const mappingAcc =
+    summary?.frame?.system_stats?.mapping_accuracy ??
+    summary?.frame?.system_stats?.surface_precision ??
+    summary?.stats?.mapping_accuracy ??
+    summary?.stats?.surface_precision ??
+    null;
+
+  const hasLiveAcc = mappingAcc !== null && mappingAcc !== undefined && !isNaN(Number(mappingAcc));
+  const meterVal = hasLiveAcc ? Number(mappingAcc) : null;
+  const meterLabel = "TRAVERSABILITY SURFACE PRECISION";
+  const meterStatus = hasLiveAcc
+    ? (meterVal >= 90.0 ? "OPTIMAL (SURFACE CONFIDENCE)" : "ACTIVE")
+    : "STANDBY";
+  const meterSubtitle = hasLiveAcc
+    ? "Real-time surface & ground confidence"
+    : "Awaiting sensor telemetry";
+
   return (
     <aside className="panel metrics-panel" aria-label="Live Metrics">
       <div className="panel-title">
@@ -75,10 +92,10 @@ export default function MetricsPanel({ summary, status, options }) {
       </p>
       <div className="accuracy-meter-wrapper" style={{ marginBottom: "20px" }}>
         <AccuracyMeter
-          value={validationMap}
-          label="POINTPILLARS mAP"
-          status={validationMap !== null && validationMap !== undefined ? "OFFLINE VALIDATION" : "NO VALIDATION DATA"}
-          subtitle="NuScenes validation · 81 samples"
+          value={meterVal}
+          label={meterLabel}
+          status={meterStatus}
+          subtitle={meterSubtitle}
         />
       </div>
       <div className="metrics-grid">
@@ -187,6 +204,12 @@ export default function MetricsPanel({ summary, status, options }) {
             <span style={{ color: "#8b949e" }}>PointPillars</span>
             <strong style={{ fontFamily: "monospace", color: ppStatus === "ACTIVE" ? "#3fb950" : ppStatus.includes("DISABLED") ? "#d29922" : ppStatus === "FAILED" ? "#f85149" : "#8b949e" }}>
               {ppStatus}
+            </strong>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <span style={{ color: "#8b949e" }}>SalsaNext (Seg)</span>
+            <strong style={{ fontFamily: "monospace", color: segStr === "LOADED" ? "#3fb950" : "#8b949e" }}>
+              {segStr === "LOADED" ? "LOADED" : "GEOMETRIC (FALLBACK)"}
             </strong>
           </div>
         </div>
