@@ -351,19 +351,19 @@ export class LidarScene {
 
     // Align vehicle model front bumper to positive X axis (+X forward)
     const vehicleYaw = targetYaw;
-    const finalRotY = vehicleYaw + Math.PI;
+    const finalRotY = vehicleYaw + Math.PI / 2;
 
     if (this.vehicleMesh) {
       this.vehicleMesh.position.set(x, z, -y);
-      this.vehicleMesh.rotation.y = vehicleYaw + Math.PI;
+      this.vehicleMesh.rotation.y = vehicleYaw + Math.PI / 2;
     }
     if (this.vehicleGroup && this.vehicleGroup !== this.vehicleMesh) {
       this.vehicleGroup.position.set(x, z, -y);
-      this.vehicleGroup.rotation.y = vehicleYaw + Math.PI;
+      this.vehicleGroup.rotation.y = vehicleYaw + Math.PI / 2;
     }
     if (this.egoGroup && this.egoGroup !== this.vehicleMesh) {
       this.egoGroup.position.set(x, z, -y);
-      this.egoGroup.rotation.y = vehicleYaw + Math.PI;
+      this.egoGroup.rotation.y = vehicleYaw + Math.PI / 2;
     }
     if (this.sector) {
       this.sector.position.set(x, 0.02, -y);
@@ -884,7 +884,7 @@ export class LidarScene {
       this.updatePose(egoPose);
     } else if (this.vehicleMesh) {
       const heading = Number(frame.ego_yaw ?? frame.telemetry?.ego_yaw ?? 0);
-      this.vehicleMesh.rotation.y = heading + Math.PI;
+      this.vehicleMesh.rotation.y = heading + Math.PI / 2;
       if (this.sector) {
         this.sector.rotation.z = 0;
       }
@@ -1077,7 +1077,7 @@ export class LidarScene {
     this.vehicleGroup = ego;
     this.vehicleMesh = ego;
     const egoYaw = 0;
-    this.vehicleMesh.rotation.y = egoYaw + Math.PI;
+    this.vehicleMesh.rotation.y = egoYaw + Math.PI / 2;
   }
   label(text, color) {
     let sprite = this.labels.get(text);

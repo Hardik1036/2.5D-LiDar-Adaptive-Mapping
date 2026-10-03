@@ -28,7 +28,7 @@ export default function AccuracyMeter({
   let readout = "--.-%";
   let offset = CIRCUMFERENCE;
 
-  if (isUnlinked) {
+  if (isUnlinked || status === "STANDBY") {
     color = "#475569";
     badgeBg = "rgba(71, 85, 105, 0.18)";
     badgeBorder = "rgba(71, 85, 105, 0.45)";

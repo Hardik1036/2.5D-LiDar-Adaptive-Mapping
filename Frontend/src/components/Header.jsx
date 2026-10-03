@@ -112,11 +112,7 @@ export default function Header({
                   </span>
                 </>
               )}
-              {isConnected && page !== "playback" && (
-                <span style={{ fontSize: "11px", color: "#8b949e", marginLeft: "8px", fontFamily: "monospace" }}>
-                  [{segStatus.includes("LOADED") && !segStatus.includes("NOT") ? "SalsaNext: LOADED" : "Seg: MODEL NOT LOADED"} | {detStatus.includes("LOADED") && !detStatus.includes("NOT") ? "PointPillars: LOADED" : "Det: MODEL NOT LOADED"}]
-                </span>
-              )}
+              {isConnected && page !== "playback" && null}
             </div>
             {page !== "playback" && onToggleBackend && (
               <button
