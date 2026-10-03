@@ -13,21 +13,23 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
  */
 export default function AccuracyMeter({
   value = null,
-  label = "PERCEPTION FIDELITY",
+  label = "POINTPILLARS mAP",
+  status: statusProp = null,
+  subtitle = "NuScenes validation · 81 samples",
 }) {
   const isUnlinked = value === null || value === undefined || isNaN(Number(value));
   const score = isUnlinked ? null : Math.min(100, Math.max(0, Number(value)));
 
-  let color = "#00E676";
-  let status = "OPTIMAL";
-  let badgeBg = "rgba(0, 230, 118, 0.12)";
-  let badgeBorder = "rgba(0, 230, 118, 0.3)";
+  const status = statusProp || (isUnlinked ? "NO VALIDATION DATA" : "OFFLINE VALIDATION");
+
+  let color = "#58a6ff";
+  let badgeBg = "rgba(88, 166, 255, 0.12)";
+  let badgeBorder = "rgba(88, 166, 255, 0.35)";
   let readout = "--.-%";
   let offset = CIRCUMFERENCE;
 
   if (isUnlinked) {
     color = "#475569";
-    status = "STANDBY";
     badgeBg = "rgba(71, 85, 105, 0.18)";
     badgeBorder = "rgba(71, 85, 105, 0.45)";
     readout = "--.-%";
@@ -35,16 +37,22 @@ export default function AccuracyMeter({
   } else {
     readout = `${score.toFixed(1)}%`;
     offset = CIRCUMFERENCE - (score / 100) * CIRCUMFERENCE;
-    if (score < 75.0) {
+    if (status === "OFFLINE VALIDATION") {
+      color = "#58a6ff";
+      badgeBg = "rgba(88, 166, 255, 0.12)";
+      badgeBorder = "rgba(88, 166, 255, 0.35)";
+    } else if (score < 75.0) {
       color = "#FF1744";
-      status = "CRITICAL";
       badgeBg = "rgba(255, 23, 68, 0.12)";
       badgeBorder = "rgba(255, 23, 68, 0.3)";
     } else if (score < 90.0) {
       color = "#FFD600";
-      status = "DEGRADED";
       badgeBg = "rgba(255, 214, 0, 0.12)";
       badgeBorder = "rgba(255, 214, 0, 0.3)";
+    } else {
+      color = "#00E676";
+      badgeBg = "rgba(0, 230, 118, 0.12)";
+      badgeBorder = "rgba(0, 230, 118, 0.3)";
     }
   }
 
@@ -176,7 +184,7 @@ export default function AccuracyMeter({
             {status}
           </span>
           <small style={{ fontSize: "11px", color: "#64748B" }}>
-            {isUnlinked ? "Awaiting stream" : "RMSE < 0.4 m/s"}
+            {subtitle}
           </small>
         </div>
       </div>

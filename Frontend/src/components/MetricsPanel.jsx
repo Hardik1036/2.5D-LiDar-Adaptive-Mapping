@@ -33,6 +33,23 @@ export default function MetricsPanel({ summary, status, options }) {
   const detStr = modelStatus.detection || (ppStatus === "ACTIVE" ? "POINTPILLARS ACTIVE" : "OPTIONAL / DISABLED");
   const gtStr = (summary?.frame?.system_stats?.ground_truth_status === "AVAILABLE") ? "AVAILABLE" : "NOT AVAILABLE";
 
+  // Robust PointPillars offline validation extraction
+  const valSource =
+    summary?.frame?.model_validation ??
+    summary?.frame?.system_stats?.model_validation ??
+    summary?.stats?.model_validation ??
+    summary?.frame?.model_status?.model_validation ??
+    null;
+
+  let validationMap = null;
+  if (typeof valSource === "number") {
+    validationMap = valSource;
+  } else if (typeof valSource?.mAP === "number") {
+    validationMap = valSource.mAP;
+  } else if (typeof summary?.frame?.system_stats?.model_validation?.mAP === "number") {
+    validationMap = summary.frame.system_stats.model_validation.mAP;
+  }
+
   return (
     <aside className="panel metrics-panel" aria-label="Live Metrics">
       <div className="panel-title">
@@ -58,8 +75,10 @@ export default function MetricsPanel({ summary, status, options }) {
       </p>
       <div className="accuracy-meter-wrapper" style={{ marginBottom: "20px" }}>
         <AccuracyMeter
-          value={stats?.accuracy ?? stats?.tracking_accuracy ?? null}
-          label="Live Perception Fidelity"
+          value={validationMap}
+          label="POINTPILLARS mAP"
+          status={validationMap !== null && validationMap !== undefined ? "OFFLINE VALIDATION" : "NO VALIDATION DATA"}
+          subtitle="NuScenes validation · 81 samples"
         />
       </div>
       <div className="metrics-grid">

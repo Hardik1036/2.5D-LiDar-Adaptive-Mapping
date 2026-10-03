@@ -306,11 +306,34 @@ function makeSimulation() {
       system_status: "SIMULATED",
       mode: "SIMULATION",
       model_status: {
-        segmentation: "MODEL NOT LOADED",
-        detection: "MODEL NOT LOADED",
+        pointpillars: "AVAILABLE / DISABLED",
+        pointpillars_status: "AVAILABLE / DISABLED",
+        segmentation: "GEOMETRIC",
+        detection: "OPTIONAL / DISABLED",
         device: null,
         segmentation_model: null,
         detection_model: null,
+        model_validation: {
+          model_name: "PointPillars",
+          dataset: "NuScenes validation",
+          samples: 81,
+          mAP: 9.73,
+          NDS: 14.90,
+        },
+      },
+      model_validation: {
+        model_name: "PointPillars",
+        dataset: "NuScenes validation",
+        samples: 81,
+        mAP: 9.73,
+        NDS: 14.90,
+        class_ap: {
+          Car: 41.9,
+          Pedestrian: 40.3,
+          Truck: 7.0,
+          Bus: 8.1,
+        },
+        live_ground_truth: "NOT AVAILABLE",
       },
       system_stats: {
         fps: dt > 0 ? Math.min(25, 1000 / dt) : 25,
@@ -319,7 +342,14 @@ function makeSimulation() {
         ram_mb: memory,
         tracking_accuracy: null,
         accuracy: null,
-        ground_truth_status: "GROUND TRUTH NOT AVAILABLE",
+        ground_truth_status: "NOT AVAILABLE",
+        model_validation: {
+          model_name: "PointPillars",
+          dataset: "NuScenes validation",
+          samples: 81,
+          mAP: 9.73,
+          NDS: 14.90,
+        },
       },
       cells,
       dynamic_objects,
@@ -340,8 +370,8 @@ const pausedFrameQueue = [];
 // Global Singleton State
 let ws = null;
 let reconnectTimer = null;
-const INITIAL_RECONNECT_DELAY = typeof window !== "undefined" && !window.document ? 1000 : 3000;
-let reconnectDelay = INITIAL_RECONNECT_DELAY; // Wait at least 3,000 ms before retrying
+const INITIAL_RECONNECT_DELAY = 1000;
+let reconnectDelay = INITIAL_RECONNECT_DELAY;
 let isExplicitlyClosed = false;
 
 let lastFrameAt = 0;
@@ -622,12 +652,7 @@ export function connectWebSocket() {
       activeDisconnected();
     }
     if (!isExplicitlyClosed) {
-      // Debounce reconnection: wait at least 3 seconds so the server/proxy has time to settle
-      clearTimeout(reconnectTimer);
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        connectWebSocket();
-      }, 3000);
+      scheduleReconnect();
     }
   };
 
@@ -638,10 +663,8 @@ export function connectWebSocket() {
 
 function scheduleReconnect() {
   if (reconnectTimer || isExplicitlyClosed) return;
-  // Debounce reconnection: wait at least 3,000 ms before retrying
-  const delay = Math.max(reconnectDelay, 3000);
-  const multiplier = typeof window !== "undefined" && !window.document ? 1.5 : 1.5;
-  reconnectDelay = Math.min(delay * multiplier, 12000); // Exponential backoff capped at 12s
+  const delay = reconnectDelay;
+  reconnectDelay = Math.min(delay * 2, 8000);
   clearTimeout(reconnectTimer);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -651,6 +674,10 @@ function scheduleReconnect() {
 
 export function disconnectWebSocket() {
   isExplicitlyClosed = true;
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   if (reconnectTimer) {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
@@ -659,7 +686,7 @@ export function disconnectWebSocket() {
     const old = ws;
     ws = null;
     activeWs = null;
-    old.onclose = null;
+    old.onopen = null;
     old.onerror = null;
     old.onmessage = null;
     try {
@@ -745,14 +772,14 @@ export function connectTelemetry(onFrame, onStatusChange) {
       startFallback();
     }
     if (!isPaused && ws) {
-      const CONNECTING = typeof WebSocket !== "undefined" ? WebSocket.CONNECTING : 0;
-      const OPEN = typeof WebSocket !== "undefined" ? WebSocket.OPEN : 1;
+      const CONNECTING = (typeof WebSocket !== "undefined" && WebSocket.CONNECTING !== undefined) ? WebSocket.CONNECTING : 0;
+      const OPEN = (typeof WebSocket !== "undefined" && WebSocket.OPEN !== undefined) ? WebSocket.OPEN : 1;
       // Do NOT abort or sever in-flight sockets while CONNECTING!
       if (ws.readyState === CONNECTING) {
         return;
       }
-      // If OPEN but has been silent without frames or keep-alives for >= 15 seconds, recycle
-      if (ws.readyState === OPEN && now - (lastFrameAt || openedAt) >= 15000) {
+      // If OPEN but has been silent without frames or keep-alives for >= GRACE_MS, recycle
+      if (ws.readyState === OPEN && now - (lastFrameAt || openedAt) >= GRACE_MS) {
         const old = ws;
         ws = null;
         activeWs = null;

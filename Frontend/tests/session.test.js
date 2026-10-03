@@ -99,7 +99,7 @@ test("bounded history and recording sizes are intentional", () => {
   );
 });
 
-test("summarizeFrame derives accuracy correctly with dynamic traversability fallback", () => {
+test("summarizeFrame derives accuracy correctly with zero fabrication", () => {
   // Case 1: tracking_accuracy explicitly reported
   const f1 = frame();
   f1.system_stats.tracking_accuracy = 95.4;
@@ -114,14 +114,13 @@ test("summarizeFrame derives accuracy correctly with dynamic traversability fall
   const s2 = summarizeFrame(f2);
   assert.equal(s2.accuracy, 82.1);
 
-  // Case 3: Both missing, fallback derived from cell traversability ratio (< 50)
-  // frame() cells costs: [0, 50, 51, 180, 181, 255] -> cost < 50 is [0] (1 of 6 cells = 16.7%)
+  // Case 3: Both missing -> null (zero fabrication without ground truth)
   const f3 = frame();
   delete f3.system_stats.tracking_accuracy;
   delete f3.system_stats.accuracy;
   const s3 = summarizeFrame(f3);
-  assert.equal(s3.accuracy, 16.7);
-  assert.equal(s3.stats.accuracy, 16.7);
+  assert.equal(s3.accuracy, null);
+  assert.equal(s3.stats.accuracy, null);
 
   // Case 4: Missing stats and empty cells -> null
   const f4 = { cells: [], dynamic_objects: [] };
